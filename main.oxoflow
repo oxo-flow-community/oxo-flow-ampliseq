@@ -1,0 +1,752 @@
+# ================================================================
+# oxo-flow-ampliseq — amplicon sequencing (16S/ITS) analysis
+#
+# oxo-flow port of nf-core/ampliseq 2.18.0
+#   upstream: https://github.com/nf-core/ampliseq (tag 2.18.0,
+#   sha 2723d4c298d48321594920d0324697e14d73ee94, MIT license)
+#
+# Ported default-parameters main path:
+#   RENAME_RAW_DATA_FILES -> FASTQC -> CUTADAPT -> DADA2 (quality,
+#   trunclen, filterAndTrim, learnErrors, denoise, chimera, stats,
+#   merge) -> DADA2 taxonomy (assignTaxonomy + addSpecies) ->
+#   QIIME2 import + taxa barplot -> MultiQC
+#
+# Every rule runs in the workflow workdir; all file paths are
+# explicit. Files consumed only between rules live under
+# intermediates/, files that upstream publishes live under results/.
+# ================================================================
+
+[workflow]
+name = "oxo-flow-ampliseq"
+version = "0.1.0"
+description = "Amplicon sequencing (16S/ITS) analysis with DADA2 and QIIME2 barplots — oxo-flow port of nf-core/ampliseq 2.18.0 (default path: FastQC -> cutadapt -> DADA2 denoise -> DADA2 taxonomy -> QIIME2 barplot -> MultiQC)"
+author = "oxo-flow-community"
+sample_groups_file = "test/fixtures/groups.tsv"
+
+[config]
+# --- primers (upstream default null renders literal "null" adapters;
+#     port uses empty strings — see README fidelity table) ---
+FW_primer = ""
+RV_primer = ""
+# --- cutadapt ---
+cutadapt_min_overlap = 3
+cutadapt_max_error_rate = 0.1
+# --- DADA2 filtering / denoising ---
+trunc_qmin = 25
+trunc_rmin = 0.75
+quality_type = "Auto"
+truncq = 2
+min_len = 50
+max_len = "Inf"
+max_ee = 2
+seed = 100
+sample_inference = "independent"   # "independent" | "pooled" | "pseudo"
+mergepairs_strategy = "merge"      # "merge" | "consensus" | "concatenate"
+# --- DADA2 taxonomy assignment ---
+dada_min_boot = 50
+dada_taxonomy_rc = false
+dada_addspecies_allowmultiple = false
+dada_assign_chunksize = 10000
+dada_assign_taxlevels = "Domain,Kingdom,Phylum,Class,Order,Family,Genus,Species"
+dada_ref_taxonomy = "sbdi-gtdb=R11-RS232-1"
+dada_ref_taxonomy_urls = "https://ndownloader.figshare.com/files/64711203,https://ndownloader.figshare.com/files/64711218"
+dada_ref_taxonomy_title = "SBDI-GTDB - Sativa curated 16S GTDB database - Release R11-RS232-1"
+dada_ref_taxonomy_citation = "Lundin D, Andersson A. SBDI Sativa curated 16S GTDB database. FigShare. doi: 10.17044/scilifelab.14869077.v12"
+dada_ref_taxonomy_dbversion = "SBDI-GTDB-R11-RS232-1 (https://figshare.scilifelab.se/articles/dataset/SBDI_Sativa_curated_16S_GTDB_database/14869077/10)"
+# --- run / metadata ---
+run_id = "1"
+metadata_file = "test/fixtures/metadata.tsv"
+# --- skip flags (upstream params.skip_*, all default false -> full default path) ---
+skip_fastqc = false
+skip_multiqc = false
+skip_qiime = false
+skip_barplot = false
+skip_taxonomy = false
+skip_dada_taxonomy = false
+
+[defaults]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R1  RENAME_RAW_DATA_FILES  (process_single, nf-core/ubuntu:20.04)
+#     Create consistent {sample}_1/_2.fastq.gz soft links
+# ------------------------------------------------------------------
+[[rules]]
+name = "rename_raw_data_files"
+description = "Rename raw data files to consistent _1/_2.fastq.gz soft-link names"
+input = ["test/fixtures/raw/{sample}_R1.fastq.gz", "test/fixtures/raw/{sample}_R2.fastq.gz"]
+output = ["intermediates/renamed/{sample}_1.fastq.gz", "intermediates/renamed/{sample}_2.fastq.gz"]
+shell = '''
+[ -f "{output[0]}" ] || ln -s "$PWD/{input[0]}" "{output[0]}"
+[ -f "{output[1]}" ] || ln -s "$PWD/{input[1]}" "{output[1]}"
+'''
+tags = ["rename", "preprocessing"]
+
+[rules.environment]
+docker = "nf-core/ubuntu:20.04"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R2  FASTQC  (process_low: 2 cpus / 3G; upstream --memory = 3G/2)
+#     Upstream publishes only *.html; the *.zip files feed MultiQC,
+#     so the port also declares them at results/fastqc/
+# ------------------------------------------------------------------
+[[rules]]
+name = "fastqc"
+description = "FastQC quality control on renamed reads"
+when = "!config.skip_fastqc"
+input = ["intermediates/renamed/{sample}_1.fastq.gz", "intermediates/renamed/{sample}_2.fastq.gz"]
+output = [
+    "results/fastqc/{sample}_1_fastqc.html",
+    "results/fastqc/{sample}_1_fastqc.zip",
+    "results/fastqc/{sample}_2_fastqc.html",
+    "results/fastqc/{sample}_2_fastqc.zip",
+]
+shell = "fastqc --quiet --threads {threads} --memory 1536 -o results/fastqc {input[0]} {input[1]}"
+tags = ["qc"]
+
+[rules.environment]
+docker = "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R3  CUTADAPT_BASIC  (process_medium: 6 cpus / 6G)
+#     ext.args: --minimum-length 1 -O 3 -e 0.1 -g {FW} -G {RV}
+#               --discard-untrimmed
+# ------------------------------------------------------------------
+[[rules]]
+name = "cutadapt"
+description = "Primer trimming with cutadapt on renamed reads"
+input = ["intermediates/renamed/{sample}_1.fastq.gz", "intermediates/renamed/{sample}_2.fastq.gz"]
+output = [
+    "intermediates/cutadapt/{sample}.trimmed_1.trim.fastq.gz",
+    "intermediates/cutadapt/{sample}.trimmed_2.trim.fastq.gz",
+    "results/cutadapt/{sample}.trimmed.cutadapt.log",
+]
+shell = "cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} -g {config.FW_primer} -G {config.RV_primer} --discard-untrimmed -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}"
+tags = ["trimming"]
+
+[rules.environment]
+docker = "biocontainers/cutadapt:5.2--py311haab0aaa_0"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# ------------------------------------------------------------------
+# R4  CUTADAPT_SUMMARY  (process_single, biocontainers/python:3.8.3)
+#     Parse all cutadapt logs into cutadapt_standard_summary.tsv
+# ------------------------------------------------------------------
+[[rules]]
+name = "cutadapt_summary"
+description = "Summarize cutadapt trimming stats from all log files"
+input = []
+expand_inputs = [
+    { pattern = "results/cutadapt/{sample}.trimmed.cutadapt.log", variables = { sample = "config.samples_list" } },
+]
+output = ["intermediates/cutadapt/cutadapt_standard_summary.tsv"]
+shell = "python3 scripts/cutadapt_summary.py paired_end {input} > {output[0]}"
+tags = ["summary"]
+
+[rules.environment]
+docker = "biocontainers/python:3.8.3"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R5  CUTADAPT_SUMMARY_MERGE  (process_single, action=copy)
+# ------------------------------------------------------------------
+[[rules]]
+name = "cutadapt_summary_merge"
+description = "Publish cutadapt summary as cutadapt_summary.tsv"
+input = ["intermediates/cutadapt/cutadapt_standard_summary.tsv"]
+output = ["results/cutadapt/cutadapt_summary.tsv"]
+shell = "cp {input[0]} {output[0]}"
+tags = ["summary"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R6/R7  DADA2_QUALITY1  (process_low)  prefix FW / RV
+#        plotQualityProfile on trimmed reads
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_quality_fw"
+description = "DADA2 plotQualityProfile on forward trimmed reads"
+input = []
+expand_inputs = [
+    { pattern = "intermediates/cutadapt/{sample}.trimmed_1.trim.fastq.gz", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "intermediates/dada2/QC/FW_qual_stats.tsv",
+    "results/dada2/QC/FW_qual_stats.pdf",
+    "results/dada2/QC/svg/FW_qual_stats.svg",
+    "results/dada2/args/FW_plotQualityProfile.args.txt",
+]
+shell = "Rscript scripts/dada2_quality.R FW results/dada2/QC results/dada2/QC/svg results/dada2/args intermediates/dada2/QC ', n = 5e+04, aggregate = TRUE' {input}"
+tags = ["qc", "dada2"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "dada2_quality_rv"
+description = "DADA2 plotQualityProfile on reverse trimmed reads"
+input = []
+expand_inputs = [
+    { pattern = "intermediates/cutadapt/{sample}.trimmed_2.trim.fastq.gz", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "intermediates/dada2/QC/RV_qual_stats.tsv",
+    "results/dada2/QC/RV_qual_stats.pdf",
+    "results/dada2/QC/svg/RV_qual_stats.svg",
+    "results/dada2/args/RV_plotQualityProfile.args.txt",
+]
+shell = "Rscript scripts/dada2_quality.R RV results/dada2/QC results/dada2/QC/svg results/dada2/args intermediates/dada2/QC ', n = 5e+04, aggregate = TRUE' {input}"
+tags = ["qc", "dada2"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R8/R9  TRUNCLEN  (process_single, biocontainers/pandas:1.1.5)
+#        Find truncation length from quality stats (25 / 0.75)
+# ------------------------------------------------------------------
+[[rules]]
+name = "trunclen_fw"
+description = "Find truncation length for forward reads"
+input = ["intermediates/dada2/QC/FW_qual_stats.tsv"]
+output = ["intermediates/dada2/trunclenf.txt"]
+shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trunc_rmin} > {output[0]}"
+tags = ["dada2"]
+
+[rules.environment]
+docker = "biocontainers/pandas:1.1.5"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+[[rules]]
+name = "trunclen_rv"
+description = "Find truncation length for reverse reads"
+input = ["intermediates/dada2/QC/RV_qual_stats.tsv"]
+output = ["intermediates/dada2/trunclenr.txt"]
+shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trunc_rmin} > {output[0]}"
+tags = ["dada2"]
+
+[rules.environment]
+docker = "biocontainers/pandas:1.1.5"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R10  DADA2_FILTNTRIM  (process_low: 2 cpus / 3G)
+#      filterAndTrim per sample with run-level truncation lengths.
+#      Args file is renamed {sample}.filterAndTrim.args.txt because
+#      all rules share one workdir (upstream: filterAndTrim.args.txt
+#      per isolated work dir).
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_filtntrim"
+description = "DADA2 filterAndTrim on trimmed reads"
+input = [
+    "intermediates/cutadapt/{sample}.trimmed_1.trim.fastq.gz",
+    "intermediates/cutadapt/{sample}.trimmed_2.trim.fastq.gz",
+    "intermediates/dada2/trunclenf.txt",
+    "intermediates/dada2/trunclenr.txt",
+]
+output = [
+    "intermediates/dada2/{sample}_1.filt.fastq.gz",
+    "intermediates/dada2/{sample}_2.filt.fastq.gz",
+    "intermediates/dada2/{sample}.filter_stats.tsv",
+    "results/dada2/args/{sample}.filterAndTrim.args.txt",
+]
+shell = '''
+TRUNCLENF=$(cat intermediates/dada2/trunclenf.txt)
+TRUNCLENR=$(cat intermediates/dada2/trunclenr.txt)
+Rscript scripts/dada2_filter_and_trim.R {input[0]} {output[0]} {input[1]} {output[1]} "$TRUNCLENF" "$TRUNCLENR" {threads} {output[2]} {output[3]} {config.quality_type} {config.truncq} {config.min_len} {config.max_len} {config.max_ee}
+'''
+tags = ["dada2", "filtering"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R11/R12  DADA2_QUALITY2  (process_low)  prefix FW_preprocessed /
+#          RV_preprocessed on filterAndTrim outputs
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_quality_fw_preprocessed"
+description = "DADA2 plotQualityProfile on forward filtered reads"
+input = []
+expand_inputs = [
+    { pattern = "intermediates/dada2/{sample}_1.filt.fastq.gz", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "intermediates/dada2/QC/FW_preprocessed_qual_stats.tsv",
+    "results/dada2/QC/FW_preprocessed_qual_stats.pdf",
+    "results/dada2/QC/svg/FW_preprocessed_qual_stats.svg",
+    "results/dada2/args/FW_preprocessed_plotQualityProfile.args.txt",
+]
+shell = "Rscript scripts/dada2_quality.R FW_preprocessed results/dada2/QC results/dada2/QC/svg results/dada2/args intermediates/dada2/QC ', n = 5e+04, aggregate = TRUE' {input}"
+tags = ["qc", "dada2"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "dada2_quality_rv_preprocessed"
+description = "DADA2 plotQualityProfile on reverse filtered reads"
+input = []
+expand_inputs = [
+    { pattern = "intermediates/dada2/{sample}_2.filt.fastq.gz", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "intermediates/dada2/QC/RV_preprocessed_qual_stats.tsv",
+    "results/dada2/QC/RV_preprocessed_qual_stats.pdf",
+    "results/dada2/QC/svg/RV_preprocessed_qual_stats.svg",
+    "results/dada2/args/RV_preprocessed_plotQualityProfile.args.txt",
+]
+shell = "Rscript scripts/dada2_quality.R RV_preprocessed results/dada2/QC results/dada2/QC/svg results/dada2/args intermediates/dada2/QC ', n = 5e+04, aggregate = TRUE' {input}"
+tags = ["qc", "dada2"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R13  DADA2_ERR  (process_medium: 6 cpus / 6G)
+#      learnErrors for forward and reverse reads
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_err"
+description = "DADA2 learnErrors error models for forward and reverse reads"
+input = []
+expand_inputs = [
+    { pattern = "intermediates/dada2/{sample}_1.filt.fastq.gz", variables = { sample = "config.samples_list" } },
+    { pattern = "intermediates/dada2/{sample}_2.filt.fastq.gz", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "intermediates/dada2/{config.run_id}_1.err.rds",
+    "intermediates/dada2/{config.run_id}_2.err.rds",
+    "results/dada2/log/{config.run_id}.err.log",
+    "results/dada2/QC/{config.run_id}_1.err.pdf",
+    "results/dada2/QC/{config.run_id}_2.err.pdf",
+    "results/dada2/QC/svg/{config.run_id}_1.err.svg",
+    "results/dada2/QC/svg/{config.run_id}_2.err.svg",
+    "results/dada2/QC/{config.run_id}_1.err.convergence.txt",
+    "results/dada2/QC/{config.run_id}_2.err.convergence.txt",
+    "results/dada2/args/learnErrors.args.txt",
+]
+shell = "Rscript scripts/dada2_learn_errors.R {config.run_id} intermediates/dada2 results/dada2/QC results/dada2/QC/svg results/dada2/args results/dada2/log {config.seed} {threads} {config.quality_type} {input}"
+tags = ["dada2", "denoising"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# ------------------------------------------------------------------
+# R14  DADA2_DENOISING  (process_high 10 cpus / 20G + process_long
+#      48h + error_retry -> retries = 3)
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_denoising"
+description = "DADA2 core denoising: dada, mergePairs, makeSequenceTable"
+input = [
+    "intermediates/dada2/{config.run_id}_1.err.rds",
+    "intermediates/dada2/{config.run_id}_2.err.rds",
+]
+expand_inputs = [
+    { pattern = "intermediates/dada2/{sample}_1.filt.fastq.gz", variables = { sample = "config.samples_list" } },
+    { pattern = "intermediates/dada2/{sample}_2.filt.fastq.gz", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "intermediates/dada2/{config.run_id}_1.dada.rds",
+    "intermediates/dada2/{config.run_id}_2.dada.rds",
+    "intermediates/dada2/{config.run_id}.mergers.rds",
+    "intermediates/dada2/{config.run_id}.seqtab.rds",
+    "results/dada2/log/{config.run_id}.dada.log",
+    "results/dada2/args/dada.args.txt",
+    "results/dada2/args/mergePairs.args.txt",
+]
+retries = 3
+shell = "Rscript scripts/dada2_denoise.R {config.run_id} intermediates/dada2 results/dada2/log results/dada2/args {config.seed} {config.quality_type} {threads} {config.mergepairs_strategy} {config.sample_inference} {input}"
+tags = ["dada2", "denoising"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 10
+memory = "20G"
+time_limit = "48h"
+
+# ------------------------------------------------------------------
+# R15  DADA2_RMCHIMERA  (process_medium: 6 cpus / 6G)
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_rmchimera"
+description = "DADA2 removeBimeraDenovo on the sequence table"
+input = ["intermediates/dada2/{config.run_id}.seqtab.rds"]
+output = [
+    "intermediates/dada2/{config.run_id}.ASVtable.rds",
+    "results/dada2/args/removeBimeraDenovo.args.txt",
+]
+shell = "Rscript scripts/dada2_remove_chimera.R {input[0]} {output[0]} {output[1]} {threads} {config.samples_list}"
+tags = ["dada2"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# ------------------------------------------------------------------
+# R16  DADA2_STATS  (process_low: 2 cpus / 3G)
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_stats"
+description = "Track reads through the pipeline per sample"
+input = [
+    "intermediates/dada2/{config.run_id}_1.dada.rds",
+    "intermediates/dada2/{config.run_id}_2.dada.rds",
+    "intermediates/dada2/{config.run_id}.mergers.rds",
+    "intermediates/dada2/{config.run_id}.seqtab.rds",
+]
+expand_inputs = [
+    { pattern = "intermediates/dada2/{sample}.filter_stats.tsv", variables = { sample = "config.samples_list" } },
+]
+output = ["results/dada2/{config.run_id}.stats.tsv"]
+shell = "Rscript scripts/dada2_track_stats.R {config.run_id} {output[0]} {input}"
+tags = ["dada2", "summary"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R17  DADA2_MERGE  (process_low)
+#      Merge per-run stats + build DADA2_table / ASV_table / fasta
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_merge"
+description = "Combine stats files and generate the ASV table, ASV fasta and RDS"
+input = [
+    "results/dada2/{config.run_id}.stats.tsv",
+    "intermediates/dada2/{config.run_id}.ASVtable.rds",
+]
+output = [
+    "results/dada2/DADA2_stats.tsv",
+    "results/dada2/DADA2_table.tsv",
+    "results/dada2/ASV_table.tsv",
+    "results/dada2/ASV_seqs.fasta",
+    "results/dada2/DADA2_table.rds",
+]
+shell = "Rscript scripts/dada2_merge.R {input[0]} {input[1]} results/dada2"
+tags = ["dada2", "summary"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R18  MERGE_STATS_STD  (process_single)
+#      Merge cutadapt summary with DADA2 stats -> overall_summary.tsv
+# ------------------------------------------------------------------
+[[rules]]
+name = "merge_stats"
+description = "Merge cutadapt and DADA2 statistics into overall_summary.tsv"
+input = ["results/cutadapt/cutadapt_summary.tsv", "results/dada2/DADA2_stats.tsv"]
+output = ["results/overall_summary.tsv"]
+shell = "Rscript scripts/merge_stats.R {input[0]} {input[1]} {output[0]}"
+tags = ["summary"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R19  Reference database download (system backend; upstream does this
+#      in the Nextflow launcher via file(url), outside the container)
+# ------------------------------------------------------------------
+[[rules]]
+name = "download_taxonomy_db"
+description = "Download the SBDI-GTDB reference database files (assignTaxonomy + addSpecies)"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = []
+output = [
+    "intermediates/dada2/db/64711203.fna.gz",
+    "intermediates/dada2/db/64711218.fna.gz",
+]
+shell = '''
+mkdir -p intermediates/dada2/db
+curl -fsSL -o {output[0]} $(echo {config.dada_ref_taxonomy_urls} | cut -d, -f1)
+curl -fsSL -o {output[1]} $(echo {config.dada_ref_taxonomy_urls} | cut -d, -f2)
+'''
+tags = ["reference"]
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R20  FORMAT_TAXONOMY  (process_single, biocontainers:v1.2.0_cv1)
+#      Reformat downloaded DB files to assignTaxonomy.fna /
+#      addSpecies.fna + ref_taxonomy info file.
+#      Runs in a scratch dir because the reformat script globs "*".
+# ------------------------------------------------------------------
+[[rules]]
+name = "format_taxonomy"
+description = "Reformat SBDI-GTDB reference database files for DADA2"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = ["intermediates/dada2/db/64711203.fna.gz", "intermediates/dada2/db/64711218.fna.gz"]
+output = [
+    "intermediates/dada2/assignTaxonomy.fna",
+    "intermediates/dada2/addSpecies.fna",
+    "results/dada2/ref_taxonomy.sbdi-gtdb_R11-RS232-1.txt",
+]
+shell = '''
+mkdir -p work/format_taxonomy
+cp {input[0]} {input[1]} work/format_taxonomy/
+cd work/format_taxonomy
+sh ../../scripts/taxref_reformat_sbdi-gtdb.sh
+cp assignTaxonomy.fna addSpecies.fna "$OLDPWD/intermediates/dada2/"
+echo -e "--dada_ref_taxonomy: sbdi-gtdb=R11-RS232-1\\n" > "$OLDPWD/results/dada2/ref_taxonomy.sbdi-gtdb_R11-RS232-1.txt"
+echo -e "Title: SBDI-GTDB - Sativa curated 16S GTDB database - Release R11-RS232-1\\n" >> "$OLDPWD/results/dada2/ref_taxonomy.sbdi-gtdb_R11-RS232-1.txt"
+echo -e "Citation: Lundin D, Andersson A. SBDI Sativa curated 16S GTDB database. FigShare. doi: 10.17044/scilifelab.14869077.v12\\n" >> "$OLDPWD/results/dada2/ref_taxonomy.sbdi-gtdb_R11-RS232-1.txt"
+echo "All entries: file:[https://ndownloader.figshare.com/files/64711203, https://ndownloader.figshare.com/files/64711218], fmtscript:taxref_reformat_sbdi-gtdb.sh, taxlevels:Domain,Kingdom,Phylum,Class,Order,Family,Genus,Species, dbversion:SBDI-GTDB-R11-RS232-1, title:SBDI-GTDB - Sativa curated 16S GTDB database - Release R11-RS232-1, citation:Lundin D, Andersson A. SBDI Sativa curated 16S GTDB database. FigShare. doi: 10.17044/scilifelab.14869077.v12" >> "$OLDPWD/results/dada2/ref_taxonomy.sbdi-gtdb_R11-RS232-1.txt"
+'''
+tags = ["reference"]
+
+[rules.environment]
+docker = "docker.io/biocontainers/biocontainers:v1.2.0_cv1"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R21  DADA2_TAXONOMY + DADA2_ADDSPECIES + collectFile
+#      (process_high 10 cpus/20G; addSpecies 1 cpu/50G process_long)
+#      Upstream splits ASV_seqs.fasta into chunks of 10000 and runs
+#      assignTaxonomy + addSpecies per chunk, then concatenates with
+#      header + sorted rows. The port merges the two processes into
+#      one rule with an awk split and per-chunk Rscript calls —
+#      same chunks (ASV_seqs_<n>.fasta), same outputs, same
+#      concatenation semantics. See README fidelity table.
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_taxonomy"
+description = "DADA2 assignTaxonomy + addSpecies with 10000-sequence chunking"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = [
+    "results/dada2/ASV_seqs.fasta",
+    "intermediates/dada2/assignTaxonomy.fna",
+    "intermediates/dada2/addSpecies.fna",
+]
+output = [
+    "results/dada2/ASV_tax.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/args/assignTaxonomy.args.txt",
+    "results/dada2/args/addSpecies.args.txt",
+]
+shell = '''
+mkdir -p work/dada2_taxonomy
+awk 'BEGIN{n=0;c=0} /^>/{n++; if (n % {config.dada_assign_chunksize} == 1) {c++; if (file) close(file); file=sprintf("work/dada2_taxonomy/ASV_seqs_%d.fasta", c)}} {print > file}' {input[0]}
+for chunk in work/dada2_taxonomy/ASV_seqs_*.fasta; do
+    Rscript scripts/dada2_assign_taxonomy.R "$chunk" {input[1]} ".ASV_tax.sbdi-gtdb_R11-RS232-1" "{config.dada_assign_taxlevels}" {config.seed} {threads} {config.dada_min_boot} {config.dada_taxonomy_rc} work/dada2_taxonomy
+    Rscript scripts/dada2_add_species.R "$(basename "$chunk" .fasta).ASV_tax.sbdi-gtdb_R11-RS232-1.rds" {input[2]} "{config.dada_assign_taxlevels}" {config.seed} {config.dada_addspecies_allowmultiple} {config.dada_taxonomy_rc} work/dada2_taxonomy
+done
+head -1 work/dada2_taxonomy/ASV_seqs_1.ASV_tax.sbdi-gtdb_R11-RS232-1.tsv > {output[0]}
+for f in work/dada2_taxonomy/ASV_seqs_*.ASV_tax.sbdi-gtdb_R11-RS232-1.tsv; do tail -n +2 "$f"; done | sort >> {output[0]}
+head -1 work/dada2_taxonomy/ASV_seqs_1.species.tsv > {output[1]}
+for f in work/dada2_taxonomy/ASV_seqs_*.species.tsv; do tail -n +2 "$f"; done | sort >> {output[1]}
+printf 'assignTaxonomy\\tminBoot = {config.dada_min_boot},tryRC = {config.dada_taxonomy_rc}\\ntaxlevels\\tc("{config.dada_assign_taxlevels}")\\nseed\\t{config.seed}\\n' > {output[2]}
+printf 'addSpecies\\tn = 1e5,tryRC = {config.dada_taxonomy_rc}\\ntaxlevels\\tc("{config.dada_assign_taxlevels}")\\nseed\\t{config.seed}\\n' > {output[3]}
+'''
+tags = ["dada2", "taxonomy"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+
+[rules.resources]
+threads = 10
+memory = "20G"
+time_limit = "24h"
+
+# ------------------------------------------------------------------
+# R22-R25  QIIME2 import + taxa barplot  (process_low, qiime2:2026.4)
+#          Minimal QIIME2 slice needed for the default-path barplot.
+#          run_qiime2 gates all four; skip_taxonomy/skip_dada_taxonomy
+#          additionally gate intax + barplot (upstream: empty
+#          taxonomy channel skips them).
+# ------------------------------------------------------------------
+[[rules]]
+name = "qiime2_inasv"
+description = "Import ASV table into QIIME2 FeatureTable[Frequency]"
+when = "!config.skip_qiime"
+input = ["results/dada2/DADA2_table.tsv"]
+output = ["intermediates/qiime2/table.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_inasv/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_inasv/numbacache"
+sed '/^# Constructed from biom file/d' {input[0]} > work/qiime2_inasv/biom-table.txt
+biom convert -i work/qiime2_inasv/biom-table.txt -o work/qiime2_inasv/table.biom --table-type="OTU table" --to-hdf5
+qiime tools import --input-path work/qiime2_inasv/table.biom --type 'FeatureTable[Frequency]' --input-format BIOMV210Format --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+docker = "qiime2/qiime2:2026.4"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_inseq"
+description = "Import ASV sequences into QIIME2 FeatureData[Sequence]"
+when = "!config.skip_qiime"
+input = ["results/dada2/ASV_seqs.fasta"]
+output = ["intermediates/qiime2/rep-seqs.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_inseq/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_inseq/numbacache"
+qiime tools import --input-path {input[0]} --type 'FeatureData[Sequence]' --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+docker = "qiime2/qiime2:2026.4"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_intax"
+description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
+output = ["intermediates/qiime2/taxonomy.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intax/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intax/numbacache"
+mkdir -p work/qiime2_intax
+Rscript scripts/parse_dada2_taxonomy.r {input[0]} work/qiime2_intax/tax.tsv
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path work/qiime2_intax/tax.tsv --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+docker = "qiime2/qiime2:2026.4"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_barplot"
+description = "QIIME2 taxa barplot visualization and export"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_barplot"
+input = ["{config.metadata_file}", "intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
+output = [
+    "results/qiime2/barplot/index.html",
+    "results/qiime2/barplot/barplot.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_barplot/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_barplot/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_barplot/numbacache"
+qiime taxa barplot --i-table {input[1]} --i-taxonomy {input[2]} --m-metadata-file {input[0]} --o-visualization work/qiime2_barplot/taxa-bar-plots.qzv --verbose
+qiime tools export --input-path work/qiime2_barplot/taxa-bar-plots.qzv --output-path results/qiime2/barplot
+'''
+tags = ["qiime2", "visualization"]
+
+[rules.environment]
+docker = "qiime2/qiime2:2026.4"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R26  MULTIQC  (process_single)
+#      MultiQC aggregates fastqc zips + cutadapt logs in a scratch
+#      dir (multiqc scans its cwd ".")
+# ------------------------------------------------------------------
+[[rules]]
+name = "multiqc"
+description = "MultiQC report over FastQC and cutadapt results"
+when = "!config.skip_multiqc"
+input = ["assets/multiqc_config.yml"]
+expand_inputs = [
+    { pattern = "results/fastqc/{sample}_1_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "results/fastqc/{sample}_2_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "results/cutadapt/{sample}.trimmed.cutadapt.log", variables = { sample = "config.samples_list" } },
+]
+output = ["results/multiqc/multiqc_report.html"]
+shell = '''
+mkdir -p work/multiqc
+cp {input} work/multiqc/
+cd work/multiqc
+multiqc --force --config multiqc_config.yml .
+cp multiqc_report.html "$OLDPWD/results/multiqc/multiqc_report.html"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+docker = "community.wave.seqera.io/library/multiqc:1.34--db7c73dae76bc9e6"
+
+[rules.resources]
+threads = 1
+memory = "1G"
