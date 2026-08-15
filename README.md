@@ -1,23 +1,91 @@
-# oxo-flow-ampliseq
+# oxo-flow-ampliseq — Amplicon sequencing (16S/ITS): DADA2 denoising, taxonomy assignment and QC
 
 [![CI](https://github.com/oxo-flow-community/oxo-flow-ampliseq/actions/workflows/ci.yml/badge.svg)](https://github.com/oxo-flow-community/oxo-flow-ampliseq/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Amplicon sequencing (16S/ITS) analysis with FastQC, cutadapt primer
-trimming, DADA2 denoising (quality profiles, truncation, filterAndTrim,
-learnErrors, dada, mergePairs, chimera removal, read tracking), DADA2
-taxonomy assignment (assignTaxonomy + addSpecies, SBDI-GTDB reference),
-QIIME2 taxa barplots and a MultiQC report. This is the default-parameters
-main path of nf-core/ampliseq; optional branches (ITS, nanopore, syncom
-controls, QIIME2 diversity/classifier analyses) are not ported.
+> ★ Verified · ⇄ Official port of [`nf-core/ampliseq`](https://github.com/nf-core/ampliseq) @ `2.18.0` — same tools, same versions, same commands. Part of the [oxo-flow-community catalog](https://oxo-flow-community.github.io/).
+
+Turn raw paired-end amplicon reads (16S or ITS) into a published, quality-checked
+DADA2 analysis: FastQC quality control, cutadapt primer trimming with a trimming
+summary, DADA2 denoising (quality profiles, automatic truncation lengths,
+filterAndTrim, error model learning, denoising, paired-end merging, chimera
+removal and read tracking), taxonomy assignment against the curated SBDI-GTDB
+reference (assignTaxonomy + addSpecies), a QIIME2 taxa barplot over your sample
+metadata, an overall per-sample read-tracking summary, and a MultiQC report.
+
+## Installation
+
+### 1. Install oxo-flow
+
+Requires **oxo-flow >= 0.11.0**. Install the prebuilt release binary
+(recommended):
+
+```bash
+curl -fL -o oxo-flow.tar.gz \
+  https://github.com/Traitome/oxo-flow/releases/download/v0.11.0/oxo-flow-v0.11.0-x86_64-unknown-linux-gnu.tar.gz
+tar xzf oxo-flow.tar.gz
+sudo mv oxo-flow /usr/local/bin/
+```
+
+Alternatively, conda users may `conda install -c bioconda oxo-flow-cli` — note
+the bioconda package may lag behind the release binary; other platform binaries
+are available on the [releases page](https://github.com/Traitome/oxo-flow/releases).
+
+### 2. Get this workflow
+
+```bash
+git clone https://github.com/oxo-flow-community/oxo-flow-ampliseq.git
+cd oxo-flow-ampliseq
+```
+
+### 3. Requirements
+
+- **Input data** — raw paired-end FASTQ reads per sample
+  (`raw/<sample>_R1.fastq.gz` / `<sample>_R2.fastq.gz`), a sample groups file
+  listing the sample IDs (default `test/fixtures/groups.tsv`), and a sample
+  metadata TSV used by the QIIME2 taxa barplot (config key `metadata_file`,
+  default `test/fixtures/metadata.tsv`). The SBDI-GTDB taxonomy reference
+  database is downloaded automatically by the workflow — you do not provide it.
+- **Compute** — up to **10 CPUs / 20 GB** per rule: `dada2_denoising`
+  (48 h time limit) and `dada2_taxonomy` (24 h time limit). Most rules need
+  1–6 CPUs / 1–6 GB (FastQC, cutadapt, DADA2 quality/stats, QIIME2 imports).
+- **Tool delivery** — containers with **pinned images**: every rule declares a
+  pinned Docker image (Docker or Singularity at runtime), so no conda
+  environment is needed. The host additionally needs `curl` for the
+  taxonomy-database download rule and network access to figshare.
+
+## Usage
+
+```bash
+# 1. install oxo-flow (see Installation)
+# 2. prepare data: raw/<sample>_R1.fastq.gz / _R2.fastq.gz (see test/fixtures/raw/)
+# 3. preview the plan
+oxo-flow dry-run main.oxoflow
+# 4. run
+oxo-flow run main.oxoflow -j 8
+# 5. run a subset
+oxo-flow run main.oxoflow -t multiqc --samples first:2
+```
+
+Configuration lives in the `[config]` section of `main.oxoflow`. The primer
+sequences `FW_primer` / `RV_primer` default to empty strings (no adapter
+trimming); cutadapt behavior is controlled by `cutadapt_min_overlap` and
+`cutadapt_max_error_rate`. DADA2 filtering/denoising knobs (`trunc_qmin`,
+`min_len`, `max_ee`, `sample_inference`, `mergepairs_strategy`, …) mirror the
+upstream parameters, and `run_id` names the run-level outputs. `metadata_file`
+points at the sample metadata TSV for the barplot (default
+`test/fixtures/metadata.tsv`). All `skip_*` flags map 1:1 to the upstream
+`params.skip_*` — all default to `false`, i.e. the full default path runs;
+`skip_fastqc` requires `skip_multiqc` too, and `skip_taxonomy` /
+`skip_dada_taxonomy` additionally gate the QIIME2 taxonomy import and barplot.
 
 ## Source
 
 Ported from **[nf-core/ampliseq](https://github.com/nf-core/ampliseq)**,
 version `2.18.0` (commit `2723d4c298d48321594920d0324697e14d73ee94`, MIT
-license, see `LICENSE.upstream`). This port is maintained independently and
-**may lag the upstream** — check the commit above and the fidelity table
-below for the exact ported state.
+license, see `LICENSE.upstream`). Created 2026-08-15; this workflow may lag
+behind upstream releases — check the commit above and the fidelity table below
+for the exact ported state. Attribution details are in `NOTICE.md`.
 
 ## Fidelity
 
@@ -61,37 +129,16 @@ Other notes:
 - `metadata_file` is a config key (default `test/fixtures/metadata.tsv`);
   upstream takes it from the samplesheet.
 
-## Quickstart
+## Test
 
 ```bash
-# 1. install oxo-flow (see Requirements)
-# 2. prepare data: raw/<sample>_R1.fastq.gz / _R2.fastq.gz (see fixtures/)
-# 3. preview the plan
-oxo-flow dry-run main.oxoflow
-# 4. run
-oxo-flow run main.oxoflow -j 8
-# 5. run a subset
-oxo-flow run main.oxoflow -t multiqc --samples first:2
+bash test/run.sh
 ```
 
-## Requirements
-
-- **oxo-flow ≥ 0.11.0** — install the prebuilt binary:
-
-```bash
-curl -fL -o oxo-flow.tar.gz \
-  https://github.com/Traitome/oxo-flow/releases/download/v0.11.0/oxo-flow-v0.11.0-x86_64-unknown-linux-gnu.tar.gz
-tar xzf oxo-flow.tar.gz
-sudo mv oxo-flow /usr/local/bin/
-```
-
-- Conda users may alternatively `conda install -c bioconda oxo-flow-cli`
-  (note: the bioconda package currently lags the release binary at 0.10.2 —
-  some 0.11.0 format features may not validate).
-- Docker/Singularity/conda at runtime, per the environments declared in
-  `main.oxoflow`.
+Runs `validate` + `lint` + `dry-run` (with `--samples first:1`) against
+`main.oxoflow`; it must exit 0.
 
 ## License
 
-Apache-2.0 (this port, see `LICENSE` and `NOTICE.md`); upstream
+Apache-2.0 (this workflow, see `LICENSE` and `NOTICE.md`); upstream
 nf-core/ampliseq is MIT (`LICENSE.upstream`).

@@ -1,7 +1,9 @@
 {
   "name": "oxo-flow-ampliseq",
-  "title": "nf-core ampliseq (port)",
-  "engine": "oxo-flow",
+  "title": "Amplicon sequencing (16S/ITS): DADA2 denoising, taxonomy assignment and QC",
+  "origin": "port",
+  "rating": "verified",
+  "engine": "nextflow",
   "source": {
     "repo": "nf-core/ampliseq",
     "url": "https://github.com/nf-core/ampliseq",
@@ -10,9 +12,8 @@
     "license": "MIT"
   },
   "created": "2026-08-15",
-  "domain": "genomics",
+  "domain": "amplicon",
   "tags": ["amplicon", "16s", "its", "dada2", "qiime2", "nf-core"],
-  "description": "oxo-flow port of the nf-core/ampliseq pipeline: amplicon sequencing analysis (16S/ITS) with FastQC, cutadapt trimming, DADA2 denoising, taxonomy assignment, QIIME2 taxa barplots and MultiQC.",
   "scope": [
     "rename_raw_data_files",
     "fastqc",
@@ -51,20 +52,31 @@
   ],
   "rule_count": 26,
   "tools": [
-    "fastqc@0.12.1",
-    "cutadapt@5.2",
-    "python@3.8.3",
-    "pandas@1.1.5",
-    "r-base@4.0.3",
-    "dada2@1.26.0",
-    "bioconductor-digest@0.6.27",
+    "fastqc",
+    "cutadapt",
+    "python",
+    "pandas",
+    "r-base",
+    "dada2",
+    "bioconductor-digest",
     "curl",
-    "biocontainers@1.2.0",
-    "qiime2@2026.4",
-    "multiqc@1.34"
+    "biocontainers",
+    "qiime2",
+    "multiqc"
   ],
-  "status": "ready",
+  "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming, DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking), taxonomy assignment against the SBDI-GTDB reference, a QIIME2 taxa barplot over sample metadata, an overall summary table and a MultiQC report.",
+  "installation": {
+    "engine": "oxo-flow >= 0.11.0",
+    "toolchain": "containers (Docker/Singularity) — pinned images",
+    "requirements": [
+      "raw paired-end FASTQ reads per sample (raw/<sample>_R1.fastq.gz / _R2.fastq.gz) plus a sample groups file (default test/fixtures/groups.tsv)",
+      "sample metadata TSV for the QIIME2 taxa barplot (config metadata_file, default test/fixtures/metadata.tsv); the SBDI-GTDB taxonomy reference database is downloaded automatically",
+      "compute: up to 10 CPUs / 20 GB per rule (dada2_denoising with 48h limit, dada2_taxonomy with 24h limit); most rules need 1-6 CPUs / 1-6 GB",
+      "host: Docker or Singularity to run the pinned container images, curl for the taxonomy-database download rule, and network access to figshare",
+      "optional: disk for intermediates/ and results/ plus the auto-downloaded SBDI-GTDB reference database"
+    ]
+  },
   "repo_url": "https://github.com/oxo-flow-community/oxo-flow-ampliseq",
-  "site_page": "https://oxo-flow-community.github.io/oxo-flow-ampliseq/",
+  "license": "Apache-2.0",
   "upstream_license": "MIT"
 }
