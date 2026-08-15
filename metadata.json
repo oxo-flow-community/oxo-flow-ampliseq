@@ -66,7 +66,7 @@
   ],
   "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming, DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking), taxonomy assignment against the SBDI-GTDB reference, a QIIME2 taxa barplot over sample metadata, an overall summary table and a MultiQC report.",
   "installation": {
-    "engine": "oxo-flow >= 0.11.0",
+    "engine": "oxo-flow >= 0.12.0",
     "toolchain": "containers (Docker/Singularity) — pinned images",
     "requirements": [
       "raw paired-end FASTQ reads per sample (raw/<sample>_R1.fastq.gz / _R2.fastq.gz) plus a sample groups file (default test/fixtures/groups.tsv)",
