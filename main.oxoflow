@@ -134,7 +134,7 @@ shell = "cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_o
 tags = ["trimming"]
 
 [rules.environment]
-docker = "biocontainers/cutadapt:5.2--py311haab0aaa_0"
+docker = "quay.io/biocontainers/cutadapt:5.2--py311haab0aaa_0"
 
 [rules.resources]
 threads = 6
@@ -156,7 +156,7 @@ shell = "python3 scripts/cutadapt_summary.py paired_end {input} > {output[0]}"
 tags = ["summary"]
 
 [rules.environment]
-docker = "biocontainers/python:3.8.3"
+docker = "quay.io/biocontainers/python:3.8.3"
 
 [rules.resources]
 threads = 1
@@ -243,7 +243,7 @@ shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trun
 tags = ["dada2"]
 
 [rules.environment]
-docker = "biocontainers/pandas:1.1.5"
+docker = "quay.io/biocontainers/pandas:1.1.5"
 
 [rules.resources]
 threads = 1
@@ -258,7 +258,7 @@ shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trun
 tags = ["dada2"]
 
 [rules.environment]
-docker = "biocontainers/pandas:1.1.5"
+docker = "quay.io/biocontainers/pandas:1.1.5"
 
 [rules.resources]
 threads = 1
