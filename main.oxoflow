@@ -84,7 +84,7 @@ shell = '''
 tags = ["rename", "preprocessing"]
 
 [rules.environment]
-docker = "nf-core/ubuntu:20.04"
+docker = "quay.io/nf-core/ubuntu:20.04"
 
 [rules.resources]
 threads = 1
