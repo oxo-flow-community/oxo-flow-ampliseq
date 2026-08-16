@@ -130,7 +130,12 @@ output = [
     "intermediates/cutadapt/{sample}.trimmed_2.trim.fastq.gz",
     "results/cutadapt/{sample}.trimmed.cutadapt.log",
 ]
-shell = "cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} -g {config.FW_primer} -G {config.RV_primer} --discard-untrimmed -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}"
+shell = """
+args=""
+[ -n "{config.FW_primer}" ] && args="$args -g {config.FW_primer}"
+[ -n "{config.RV_primer}" ] && args="$args -G {config.RV_primer}"
+cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args --discard-untrimmed -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}
+"""
 tags = ["trimming"]
 
 [rules.environment]
