@@ -1,5 +1,8 @@
 # The upstream DADA2 module env (bioconductor-dada2 + r-base + r-digest +
 # r-tbb — the same toolset the wave.seqera.io community image bundles).
+# r-tbb is dropped: some conda mirror snapshots don't index it (live
+# PackagesNotFoundError on a synced mirror); it only tunes data.table
+# parallelism and is not required by the DADA2 scripts.
 # Channel NAMES only (no mirror URLs): CN users point their conda config
 # at a domestic mirror, international users use the defaults.
 channels:
@@ -10,4 +13,3 @@ dependencies:
   - bioconductor-dada2=1.26
   - r-base=4.2
   - r-digest
-  - r-tbb
