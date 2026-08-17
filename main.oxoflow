@@ -134,7 +134,12 @@ shell = """
 args=""
 [ -n "{config.FW_primer}" ] && args="$args -g {config.FW_primer}"
 [ -n "{config.RV_primer}" ] && args="$args -G {config.RV_primer}"
-cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args --discard-untrimmed -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}
+# With no primers configured there is nothing to trim, so nothing may be
+# discarded (live: empty-primer default + unconditional --discard-untrimmed
+# emptied the fixture — 20-byte gzips, DADA2 saw zero reads).
+DISCARD=""
+[ -n "$args" ] && DISCARD="--discard-untrimmed"
+cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args $DISCARD -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}
 """
 tags = ["trimming"]
 
