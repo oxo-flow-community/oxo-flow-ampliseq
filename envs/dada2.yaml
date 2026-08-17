@@ -1,0 +1,13 @@
+# The upstream DADA2 module env (bioconductor-dada2 + r-base + r-digest +
+# r-tbb — the same toolset the wave.seqera.io community image bundles).
+# Channel NAMES only (no mirror URLs): CN users point their conda config
+# at a domestic mirror, international users use the defaults.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - bioconductor-dada2=1.26
+  - r-base=4.2
+  - r-digest
+  - r-tbb
