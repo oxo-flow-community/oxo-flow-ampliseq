@@ -31,8 +31,13 @@ fnRs <- sub("_1.filt.fastq.gz", "_2.filt.fastq.gz", fnFs, fixed = TRUE)
 
 sink(file = file.path(log_out_dir, paste0(prefix, ".err.log")))
 errF <- learnErrors(fnFs, nbases = 1e8, nreads = NULL, randomize = TRUE, MAX_CONSIST = 10, OMEGA_C = 0, qualityType = quality_type, errorEstimationFunction = loessErrfun, multithread = threads, verbose = TRUE)
+# the conda bioconductor-dada2 1.26 build's learnErrors returns a
+# detailed LIST (err_out/err_in/trans), CRAN releases return the
+# matrix directly — unwrap either shape
+if (is.list(errF) && !is.null(errF$err_out)) errF <- errF$err_out
 saveRDS(errF, file.path(rds_out_dir, paste0(prefix, "_1.err.rds")))
 errR <- learnErrors(fnRs, nbases = 1e8, nreads = NULL, randomize = TRUE, MAX_CONSIST = 10, OMEGA_C = 0, qualityType = quality_type, errorEstimationFunction = loessErrfun, multithread = threads, verbose = TRUE)
+if (is.list(errR) && !is.null(errR$err_out)) errR <- errR$err_out
 saveRDS(errR, file.path(rds_out_dir, paste0(prefix, "_2.err.rds")))
 sink(file = NULL)
 
