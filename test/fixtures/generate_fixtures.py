@@ -5,8 +5,10 @@ DADA2's learnErrors needs reads that share amplicon templates and differ
 by PCR-style errors; the previous hand-made kit was 200 fully random
 reads (200 unique sequences), and learnErrors returned a NULL error
 matrix (live: 'Error matrix is NULL'). This generator emits 10 16S-like
-templates x ~200 reads each with ~0.5% substitutions + Phred-40 quality
-— the error model has real structure to learn.
+templates x ~200 reads each with ~1% substitutions and ILLUMINA-LIKE
+DECLINING qualities (Q40 -> Q20 down the read). Uniform Q40 also gives
+a NULL matrix: the loess error-rate fit needs error observations across
+the quality range (live round 2: 0.5% + all-'I' qualities still NULL).
 
 Regenerate with:  python3 test/fixtures/generate_fixtures.py
 """
@@ -33,9 +35,14 @@ def make_template(rng):
 def mutate(template, rng):
     bases = list(template)
     for i in range(len(bases)):
-        if rng.random() < 0.005:  # ~0.5% per-base error rate
+        if rng.random() < 0.01:  # ~1% per-base error rate
             bases[i] = rng.choice([b for b in "ACGT" if b != bases[i]])
     return "".join(bases)
+
+
+def qualities():
+    """Illumina-like declining Phred string (Q40 -> Q20 down the read)."""
+    return "".join(chr(33 + 40 - i * 20 // (READ_LEN - 1)) for i in range(READ_LEN))
 
 
 def write_sample(name, rng):
@@ -49,7 +56,7 @@ def write_sample(name, rng):
             r1 = mutate(tpl, rng)
             # R2 = reverse complement of an independently mutated copy
             r2 = mutate(tpl, rng)[::-1].translate(str.maketrans("ACGT", "TGCA"))
-            q = "I" * READ_LEN
+            q = qualities()
             rid = f"@{name}_{i}"
             f1.write(f"{rid} 1:N:0:1\n{r1}\n+\n{q}\n")
             f2.write(f"{rid} 2:N:0:1\n{r2}\n+\n{q}\n")
