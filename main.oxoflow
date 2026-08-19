@@ -84,7 +84,7 @@ shell = '''
 tags = ["rename", "preprocessing"]
 
 [rules.environment]
-docker = "quay.io/nf-core/ubuntu:20.04"
+singularity = "docker://quay.io/nf-core/ubuntu:20.04"
 
 [rules.resources]
 threads = 1
@@ -110,7 +110,7 @@ shell = "fastqc --quiet --threads {threads} --memory 1536 -o results/fastqc {inp
 tags = ["qc"]
 
 [rules.environment]
-docker = "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
+singularity = "docker://quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
 
 [rules.resources]
 threads = 2
@@ -144,7 +144,7 @@ cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -
 tags = ["trimming"]
 
 [rules.environment]
-docker = "quay.io/biocontainers/cutadapt:5.2--py311haab0aaa_0"
+singularity = "docker://quay.io/biocontainers/cutadapt:5.2--py311haab0aaa_0"
 
 [rules.resources]
 threads = 6
@@ -166,7 +166,7 @@ shell = "python3 scripts/cutadapt_summary.py paired_end {input} > {output[0]}"
 tags = ["summary"]
 
 [rules.environment]
-docker = "quay.io/biocontainers/python:3.8.3"
+singularity = "docker://quay.io/biocontainers/python:3.8.3"
 
 [rules.resources]
 threads = 1
@@ -253,7 +253,7 @@ shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trun
 tags = ["dada2"]
 
 [rules.environment]
-docker = "quay.io/biocontainers/pandas:1.1.5"
+singularity = "docker://quay.io/biocontainers/pandas:1.1.5"
 
 [rules.resources]
 threads = 1
@@ -268,7 +268,7 @@ shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trun
 tags = ["dada2"]
 
 [rules.environment]
-docker = "quay.io/biocontainers/pandas:1.1.5"
+singularity = "docker://quay.io/biocontainers/pandas:1.1.5"
 
 [rules.resources]
 threads = 1
