@@ -63,6 +63,12 @@ skip_qiime = false
 skip_barplot = false
 skip_taxonomy = false
 skip_dada_taxonomy = false
+# the four qiime2 rules run in the quay.io/qiime2/amplicon container
+# (~20GB unpacked — needs ~25GB free disk for the pull; there is no
+# conda qiime2 on common mirrors). Upstream runs qiime2 always; the
+# port gates it (default false) so a fresh clone completes the DADA2
+# analysis without the container. Set true (with the disk) to enable.
+run_qiime2 = false
 
 [defaults]
 threads = 1
@@ -643,7 +649,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_inasv"
 description = "Import ASV table into QIIME2 FeatureTable[Frequency]"
-when = "!config.skip_qiime"
+when = "!config.skip_qiime && config.run_qiime2"
 input = ["results/dada2/DADA2_table.tsv"]
 output = ["intermediates/qiime2/table.qza"]
 shell = '''
@@ -665,7 +671,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_inseq"
 description = "Import ASV sequences into QIIME2 FeatureData[Sequence]"
-when = "!config.skip_qiime"
+when = "!config.skip_qiime && config.run_qiime2"
 input = ["results/dada2/ASV_seqs.fasta"]
 output = ["intermediates/qiime2/rep-seqs.qza"]
 shell = '''
@@ -685,7 +691,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax"
 description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2"
 input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -707,7 +713,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_barplot"
 description = "QIIME2 taxa barplot visualization and export"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_barplot"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_barplot && config.run_qiime2"
 input = ["{config.metadata_file}", "intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
 output = [
     "results/qiime2/barplot/index.html",

@@ -78,6 +78,10 @@ points at the sample metadata TSV for the barplot (default
 `params.skip_*` — all default to `false`, i.e. the full default path runs;
 `skip_fastqc` requires `skip_multiqc` too, and `skip_taxonomy` /
 `skip_dada_taxonomy` additionally gate the QIIME2 taxonomy import and barplot.
+**`run_qiime2`** (default `false`) gates all four QIIME2 rules: they run in
+the `quay.io/qiime2/amplicon` container (~20GB unpacked, ~25GB free disk
+needed for the pull; no conda qiime2 exists on common mirrors). Upstream
+runs qiime2 always — set `run_qiime2 = true` (with the disk) to enable.
 
 ## Source
 
