@@ -419,7 +419,7 @@ output = [
     "results/dada2/args/mergePairs.args.txt",
 ]
 retries = 3
-shell = "Rscript scripts/dada2_denoise.R {config.run_id} intermediates/dada2 results/dada2/log results/dada2/args {config.seed} {config.quality_type} {threads} {config.mergepairs_strategy} {config.sample_inference} {input}"
+shell = "Rscript scripts/dada2_denoise.R {config.run_id} intermediates/dada2 results/dada2/log results/dada2/args {input[0]} {input[1]} {config.seed} {config.quality_type} {threads} {config.mergepairs_strategy} {config.sample_inference} intermediates/dada2/*_1.filt.fastq.gz"
 tags = ["dada2", "denoising"]
 
 [rules.environment]
