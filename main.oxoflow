@@ -578,7 +578,7 @@ echo "All entries: file:[https://ndownloader.figshare.com/files/64711203, https:
 tags = ["reference"]
 
 [rules.environment]
-singularity = "docker://quay.io/biocontainers/biocontainers:v1.2.0_cv1"
+singularity = "docker://biocontainers/biocontainers:v1.2.0_cv1"
 
 [rules.resources]
 threads = 1
