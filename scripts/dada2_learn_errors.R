@@ -57,11 +57,11 @@ plotErrors(errR_raw, nominalQ = TRUE)
 dev.off()
 
 sink(file = file.path(qc_out_dir, paste0(prefix, "_1.err.convergence.txt")))
-dada2:::checkConvergence(errF)
+dada2:::checkConvergence(errF_raw)
 sink(file = NULL)
 
 sink(file = file.path(qc_out_dir, paste0(prefix, "_2.err.convergence.txt")))
-dada2:::checkConvergence(errR)
+dada2:::checkConvergence(errR_raw)
 sink(file = NULL)
 
 write.table(paste0('learnErrors\t', args_str), file = file.path(args_out_dir, "learnErrors.args.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE, na = '')
