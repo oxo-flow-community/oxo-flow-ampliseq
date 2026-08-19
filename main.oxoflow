@@ -656,7 +656,7 @@ qiime tools import --input-path work/qiime2_inasv/table.biom --type 'FeatureTabl
 tags = ["qiime2"]
 
 [rules.environment]
-singularity = "docker://qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -676,7 +676,7 @@ qiime tools import --input-path {input[0]} --type 'FeatureData[Sequence]' --outp
 tags = ["qiime2"]
 
 [rules.environment]
-singularity = "docker://qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -698,7 +698,7 @@ qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTa
 tags = ["qiime2"]
 
 [rules.environment]
-singularity = "docker://qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -723,7 +723,7 @@ qiime tools export --input-path work/qiime2_barplot/taxa-bar-plots.qzv --output-
 tags = ["qiime2", "visualization"]
 
 [rules.environment]
-singularity = "docker://qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
