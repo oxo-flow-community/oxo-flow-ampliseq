@@ -30,32 +30,38 @@ fnFs <- sort(grep("_1.filt.fastq.gz$", files, value = TRUE))
 fnRs <- sub("_1.filt.fastq.gz", "_2.filt.fastq.gz", fnFs, fixed = TRUE)
 
 sink(file = file.path(log_out_dir, paste0(prefix, ".err.log")))
-errF <- learnErrors(fnFs, nbases = 1e8, nreads = NULL, randomize = TRUE, MAX_CONSIST = 10, OMEGA_C = 0, qualityType = quality_type, errorEstimationFunction = loessErrfun, multithread = threads, verbose = TRUE)
+errF_raw <- learnErrors(fnFs, nbases = 1e8, nreads = NULL, randomize = TRUE, MAX_CONSIST = 10, OMEGA_C = 0, qualityType = quality_type, errorEstimationFunction = loessErrfun, multithread = threads, verbose = TRUE)
+# the conda bioconductor-dada2 1.26 build's learnErrors returns a
+# detailed LIST (err_out/err_in/trans), CRAN releases return the
+# matrix directly. The RDS holds the matrix (the cross-rule contract);
+# the local package's own consumers (plotErrors) take the raw return.
+errF <- if (is.list(errF_raw) && !is.null(errF_raw$err_out)) errF_raw$err_out else errF_raw
 saveRDS(errF, file.path(rds_out_dir, paste0(prefix, "_1.err.rds")))
-errR <- learnErrors(fnRs, nbases = 1e8, nreads = NULL, randomize = TRUE, MAX_CONSIST = 10, OMEGA_C = 0, qualityType = quality_type, errorEstimationFunction = loessErrfun, multithread = threads, verbose = TRUE)
+errR_raw <- learnErrors(fnRs, nbases = 1e8, nreads = NULL, randomize = TRUE, MAX_CONSIST = 10, OMEGA_C = 0, qualityType = quality_type, errorEstimationFunction = loessErrfun, multithread = threads, verbose = TRUE)
+errR <- if (is.list(errR_raw) && !is.null(errR_raw$err_out)) errR_raw$err_out else errR_raw
 saveRDS(errR, file.path(rds_out_dir, paste0(prefix, "_2.err.rds")))
 sink(file = NULL)
 
 pdf(file.path(qc_out_dir, paste0(prefix, "_1.err.pdf")))
-plotErrors(errF, nominalQ = TRUE)
+plotErrors(errF_raw, nominalQ = TRUE)
 dev.off()
 svg(file.path(svg_out_dir, paste0(prefix, "_1.err.svg")))
-plotErrors(errF, nominalQ = TRUE)
+plotErrors(errF_raw, nominalQ = TRUE)
 dev.off()
 
 pdf(file.path(qc_out_dir, paste0(prefix, "_2.err.pdf")))
-plotErrors(errR, nominalQ = TRUE)
+plotErrors(errR_raw, nominalQ = TRUE)
 dev.off()
 svg(file.path(svg_out_dir, paste0(prefix, "_2.err.svg")))
-plotErrors(errR, nominalQ = TRUE)
+plotErrors(errR_raw, nominalQ = TRUE)
 dev.off()
 
 sink(file = file.path(qc_out_dir, paste0(prefix, "_1.err.convergence.txt")))
-dada2:::checkConvergence(errF)
+dada2:::checkConvergence(errF_raw)
 sink(file = NULL)
 
 sink(file = file.path(qc_out_dir, paste0(prefix, "_2.err.convergence.txt")))
-dada2:::checkConvergence(errR)
+dada2:::checkConvergence(errR_raw)
 sink(file = NULL)
 
 write.table(paste0('learnErrors\t', args_str), file = file.path(args_out_dir, "learnErrors.args.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE, na = '')

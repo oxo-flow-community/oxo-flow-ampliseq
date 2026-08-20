@@ -63,6 +63,12 @@ skip_qiime = false
 skip_barplot = false
 skip_taxonomy = false
 skip_dada_taxonomy = false
+# the four qiime2 rules run in the quay.io/qiime2/amplicon container
+# (~20GB unpacked — needs ~25GB free disk for the pull; there is no
+# conda qiime2 on common mirrors). Upstream runs qiime2 always; the
+# port gates it (default false) so a fresh clone completes the DADA2
+# analysis without the container. Set true (with the disk) to enable.
+run_qiime2 = false
 
 [defaults]
 threads = 1
@@ -84,7 +90,7 @@ shell = '''
 tags = ["rename", "preprocessing"]
 
 [rules.environment]
-docker = "nf-core/ubuntu:20.04"
+singularity = "docker://quay.io/nf-core/ubuntu:20.04"
 
 [rules.resources]
 threads = 1
@@ -110,7 +116,7 @@ shell = "fastqc --quiet --threads {threads} --memory 1536 -o results/fastqc {inp
 tags = ["qc"]
 
 [rules.environment]
-docker = "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
+singularity = "docker://quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
 
 [rules.resources]
 threads = 2
@@ -130,11 +136,21 @@ output = [
     "intermediates/cutadapt/{sample}.trimmed_2.trim.fastq.gz",
     "results/cutadapt/{sample}.trimmed.cutadapt.log",
 ]
-shell = "cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} -g {config.FW_primer} -G {config.RV_primer} --discard-untrimmed -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}"
+shell = """
+args=""
+[ -n "{config.FW_primer}" ] && args="$args -g {config.FW_primer}"
+[ -n "{config.RV_primer}" ] && args="$args -G {config.RV_primer}"
+# With no primers configured there is nothing to trim, so nothing may be
+# discarded (live: empty-primer default + unconditional --discard-untrimmed
+# emptied the fixture — 20-byte gzips, DADA2 saw zero reads).
+DISCARD=""
+[ -n "$args" ] && DISCARD="--discard-untrimmed"
+cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args $DISCARD -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}
+"""
 tags = ["trimming"]
 
 [rules.environment]
-docker = "biocontainers/cutadapt:5.2--py311haab0aaa_0"
+singularity = "docker://quay.io/biocontainers/cutadapt:5.2--py311haab0aaa_0"
 
 [rules.resources]
 threads = 6
@@ -156,7 +172,7 @@ shell = "python3 scripts/cutadapt_summary.py paired_end {input} > {output[0]}"
 tags = ["summary"]
 
 [rules.environment]
-docker = "biocontainers/python:3.8.3"
+singularity = "docker://quay.io/biocontainers/python:3.8.3"
 
 [rules.resources]
 threads = 1
@@ -174,7 +190,7 @@ shell = "cp {input[0]} {output[0]}"
 tags = ["summary"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 1
@@ -201,7 +217,7 @@ shell = "Rscript scripts/dada2_quality.R FW results/dada2/QC results/dada2/QC/sv
 tags = ["qc", "dada2"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -224,7 +240,7 @@ shell = "Rscript scripts/dada2_quality.R RV results/dada2/QC results/dada2/QC/sv
 tags = ["qc", "dada2"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -243,7 +259,7 @@ shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trun
 tags = ["dada2"]
 
 [rules.environment]
-docker = "biocontainers/pandas:1.1.5"
+singularity = "docker://quay.io/biocontainers/pandas:1.1.5"
 
 [rules.resources]
 threads = 1
@@ -258,7 +274,7 @@ shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trun
 tags = ["dada2"]
 
 [rules.environment]
-docker = "biocontainers/pandas:1.1.5"
+singularity = "docker://quay.io/biocontainers/pandas:1.1.5"
 
 [rules.resources]
 threads = 1
@@ -294,7 +310,7 @@ Rscript scripts/dada2_filter_and_trim.R {input[0]} {output[0]} {input[1]} {outpu
 tags = ["dada2", "filtering"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -321,7 +337,7 @@ shell = "Rscript scripts/dada2_quality.R FW_preprocessed results/dada2/QC result
 tags = ["qc", "dada2"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -344,7 +360,7 @@ shell = "Rscript scripts/dada2_quality.R RV_preprocessed results/dada2/QC result
 tags = ["qc", "dada2"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -378,7 +394,7 @@ shell = "Rscript scripts/dada2_learn_errors.R {config.run_id} intermediates/dada
 tags = ["dada2", "denoising"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 6
@@ -409,11 +425,11 @@ output = [
     "results/dada2/args/mergePairs.args.txt",
 ]
 retries = 3
-shell = "Rscript scripts/dada2_denoise.R {config.run_id} intermediates/dada2 results/dada2/log results/dada2/args {config.seed} {config.quality_type} {threads} {config.mergepairs_strategy} {config.sample_inference} {input}"
+shell = "Rscript scripts/dada2_denoise.R {config.run_id} intermediates/dada2 results/dada2/log results/dada2/args {input[0]} {input[1]} {config.seed} {config.quality_type} {threads} {config.mergepairs_strategy} {config.sample_inference} intermediates/dada2/*_1.filt.fastq.gz"
 tags = ["dada2", "denoising"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 10
@@ -435,7 +451,7 @@ shell = "Rscript scripts/dada2_remove_chimera.R {input[0]} {output[0]} {output[1
 tags = ["dada2"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 6
@@ -461,7 +477,7 @@ shell = "Rscript scripts/dada2_track_stats.R {config.run_id} {output[0]} {input}
 tags = ["dada2", "summary"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -489,7 +505,7 @@ shell = "Rscript scripts/dada2_merge.R {input[0]} {input[1]} results/dada2"
 tags = ["dada2", "summary"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 2
@@ -508,7 +524,7 @@ shell = "Rscript scripts/merge_stats.R {input[0]} {input[1]} {output[0]}"
 tags = ["summary"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 1
@@ -568,7 +584,7 @@ echo "All entries: file:[https://ndownloader.figshare.com/files/64711203, https:
 tags = ["reference"]
 
 [rules.environment]
-docker = "docker.io/biocontainers/biocontainers:v1.2.0_cv1"
+singularity = "docker://quay.io/nf-core/ubuntu:20.04"
 
 [rules.resources]
 threads = 1
@@ -616,7 +632,7 @@ printf 'addSpecies\\tn = 1e5,tryRC = {config.dada_taxonomy_rc}\\ntaxlevels\\tc("
 tags = ["dada2", "taxonomy"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/bioconductor-dada2_r-base_r-digest_tbb:38acac09bac46f36"
+conda = "envs/dada2.yaml"
 
 [rules.resources]
 threads = 10
@@ -633,7 +649,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_inasv"
 description = "Import ASV table into QIIME2 FeatureTable[Frequency]"
-when = "!config.skip_qiime"
+when = "!config.skip_qiime && config.run_qiime2"
 input = ["results/dada2/DADA2_table.tsv"]
 output = ["intermediates/qiime2/table.qza"]
 shell = '''
@@ -646,7 +662,7 @@ qiime tools import --input-path work/qiime2_inasv/table.biom --type 'FeatureTabl
 tags = ["qiime2"]
 
 [rules.environment]
-docker = "qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -655,7 +671,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_inseq"
 description = "Import ASV sequences into QIIME2 FeatureData[Sequence]"
-when = "!config.skip_qiime"
+when = "!config.skip_qiime && config.run_qiime2"
 input = ["results/dada2/ASV_seqs.fasta"]
 output = ["intermediates/qiime2/rep-seqs.qza"]
 shell = '''
@@ -666,7 +682,7 @@ qiime tools import --input-path {input[0]} --type 'FeatureData[Sequence]' --outp
 tags = ["qiime2"]
 
 [rules.environment]
-docker = "qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -675,7 +691,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax"
 description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2"
 input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -688,7 +704,7 @@ qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTa
 tags = ["qiime2"]
 
 [rules.environment]
-docker = "qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -697,7 +713,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_barplot"
 description = "QIIME2 taxa barplot visualization and export"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_barplot"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_barplot && config.run_qiime2"
 input = ["{config.metadata_file}", "intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
 output = [
     "results/qiime2/barplot/index.html",
@@ -713,7 +729,7 @@ qiime tools export --input-path work/qiime2_barplot/taxa-bar-plots.qzv --output-
 tags = ["qiime2", "visualization"]
 
 [rules.environment]
-docker = "qiime2/qiime2:2026.4"
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 
 [rules.resources]
 threads = 2
@@ -745,7 +761,7 @@ cp multiqc_report.html "$OLDPWD/results/multiqc/multiqc_report.html"
 tags = ["reporting"]
 
 [rules.environment]
-docker = "community.wave.seqera.io/library/multiqc:1.34--db7c73dae76bc9e6"
+conda = "envs/multiqc.yaml"
 
 [rules.resources]
 threads = 1
