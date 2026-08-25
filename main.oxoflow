@@ -69,6 +69,45 @@ skip_dada_taxonomy = false
 # port gates it (default false) so a fresh clone completes the DADA2
 # analysis without the container. Set true (with the disk) to enable.
 run_qiime2 = false
+# --- ITS branch (upstream params.illumina_pe_its / cut_its /
+#     its_partial / its_extractor — all default off -> 16S path) ---
+illumina_pe_its = false   # fungal ITS long reads: skip quality-based
+                          # truncation (truncLen=0) + a second cutadapt
+                          # read-through pass removing revcomp primers
+cut_its = "none"          # "none" | "full" | "its1" | "its2"
+its_partial = 0           # keep partial ITS hits (ITSx --partial N)
+its_extractor = "itsx"    # "itsx" | "itsxrust"
+# --- multi-run merge (upstream DADA2_MERGE globs *.stats.tsv /
+#     *.ASVtable.rds when several --run_ids are given) ---
+merge_runs = false
+# --- QIIME2 downstream analyses beyond the taxa barplot (upstream
+#     params.skip_qiime_downstream default false; the port gates all
+#     of these on run_qiime2 as well) ---
+skip_qiime_downstream = false
+skip_abundance_tables = false   # feature-table exports (abs/rel)
+skip_alpha_rarefaction = false
+skip_diversity_indices = false
+diversity_rarefaction_depth = 500  # floor for core-metrics depth
+qiime_adonis_formula = ""      # comma-separated, e.g. "group"
+tax_agglom_min = 2
+tax_agglom_max = 6
+ancom = false
+ancombc = false
+ancombc2 = false
+ancombc_formula = ""           # comma-separated formulas
+ancombc2_formula = ""
+ancombc_effect_size = 1
+ancombc_significance = 0.05
+# --- QIIME2 taxonomy classifier (upstream params.qiime_ref_taxonomy /
+#     params.classifier — off by default; DADA2 taxonomy is the
+#     default path). qiime_ref_taxonomy trains a Naive-Bayes
+#     classifier on the primer-extracted reference below; classifier
+#     is a path to a pre-trained .qza (skips training). ---
+qiime_ref_taxonomy = ""
+qiime_ref_taxonomy_urls = "https://data.qiime2.org/2023.7/common/silva-138-99-seqs.qza,https://data.qiime2.org/2023.7/common/silva-138-99-tax.qza"
+classifier = ""
+# --- picrust (upstream params.picrust, default false) ---
+picrust = false
 
 [defaults]
 threads = 1
@@ -145,7 +184,21 @@ args=""
 # emptied the fixture — 20-byte gzips, DADA2 saw zero reads).
 DISCARD=""
 [ -n "$args" ] && DISCARD="--discard-untrimmed"
-cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args $DISCARD -o {output[0]} -p {output[1]} {input[0]} {input[1]} > {output[2]}
+mkdir -p work/cutadapt
+# basic pass (upstream CUTADAPT_BASIC); outputs land in the shared workdir
+cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args $DISCARD -o work/cutadapt/{sample}.basic_1.fastq.gz -p work/cutadapt/{sample}.basic_2.fastq.gz {input[0]} {input[1]} > {output[2]}
+# illumina_pe_its: second read-through pass removes the reverse-complement
+# primers from the trimmed reads (upstream CUTADAPT_READTHROUGH,
+# ext.args -a rv_primer_revcomp -A fw_primer_revcomp); DADA2 then runs
+# with truncLen=0 (no quality-based truncation for long ITS reads).
+if [ "{config.illumina_pe_its}" = "true" ]; then
+    RV_REVCOMP=$(python3 scripts/revcomp.py {config.RV_primer})
+    FW_REVCOMP=$(python3 scripts/revcomp.py {config.FW_primer})
+    cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} -a "$RV_REVCOMP" -A "$FW_REVCOMP" -o {output[0]} -p {output[1]} work/cutadapt/{sample}.basic_1.fastq.gz work/cutadapt/{sample}.basic_2.fastq.gz >> {output[2]}
+else
+    mv work/cutadapt/{sample}.basic_1.fastq.gz {output[0]}
+    mv work/cutadapt/{sample}.basic_2.fastq.gz {output[1]}
+fi
 """
 tags = ["trimming"]
 
@@ -253,6 +306,7 @@ memory = "3G"
 [[rules]]
 name = "trunclen_fw"
 description = "Find truncation length for forward reads"
+when = "!config.illumina_pe_its"
 input = ["intermediates/dada2/QC/FW_qual_stats.tsv"]
 output = ["intermediates/dada2/trunclenf.txt"]
 shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trunc_rmin} > {output[0]}"
@@ -268,6 +322,7 @@ memory = "1G"
 [[rules]]
 name = "trunclen_rv"
 description = "Find truncation length for reverse reads"
+when = "!config.illumina_pe_its"
 input = ["intermediates/dada2/QC/RV_qual_stats.tsv"]
 output = ["intermediates/dada2/trunclenr.txt"]
 shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trunc_rmin} > {output[0]}"
@@ -305,6 +360,12 @@ output = [
 shell = '''
 TRUNCLENF=$(cat intermediates/dada2/trunclenf.txt)
 TRUNCLENR=$(cat intermediates/dada2/trunclenr.txt)
+# illumina_pe_its: no quality-based truncation (upstream sets
+# trunclenf/trunclenr to 0 and skips TRUNCLEN entirely)
+if [ "{config.illumina_pe_its}" = "true" ]; then
+    TRUNCLENF=0
+    TRUNCLENR=0
+fi
 Rscript scripts/dada2_filter_and_trim.R {input[0]} {output[0]} {input[1]} {output[1]} "$TRUNCLENF" "$TRUNCLENR" {threads} {output[2]} {output[3]} {config.quality_type} {config.truncq} {config.min_len} {config.max_len} {config.max_ee}
 '''
 tags = ["dada2", "filtering"]
@@ -501,7 +562,16 @@ output = [
     "results/dada2/ASV_seqs.fasta",
     "results/dada2/DADA2_table.rds",
 ]
-shell = "Rscript scripts/dada2_merge.R {input[0]} {input[1]} results/dada2"
+shell = '''
+# merge_runs: upstream DADA2_MERGE globs all *.stats.tsv /
+# *.ASVtable.rds (one set per --run_id) and merges them
+# (unique-rbind stats, mergeSequenceTables for the ASV tables).
+if [ "{config.merge_runs}" = "true" ]; then
+    Rscript scripts/dada2_merge.R "$(ls results/dada2/*.stats.tsv | tr '\n' ' ')" "$(ls intermediates/dada2/*.ASVtable.rds | tr '\n' ' ')" results/dada2
+else
+    Rscript scripts/dada2_merge.R "{input[0]}" "{input[1]}" results/dada2
+fi
+'''
 tags = ["dada2", "summary"]
 
 [rules.environment]
@@ -512,7 +582,171 @@ threads = 2
 memory = "3G"
 
 # ------------------------------------------------------------------
-# R18  MERGE_STATS_STD  (process_single)
+# R18  ITSX_CUTASV  (process_medium, biocontainers/itsx:1.1.3)
+#      Cut the ITS region out of full-length ASV sequences. Only one
+#      of itsx_cutasv / itsxrust_cutasv runs (its_extractor switch);
+#      the selected region fasta is copied to a canonical
+#      intermediates/itsx/ path so downstream rules have a static
+#      input regardless of cut_its/its_partial.
+# ------------------------------------------------------------------
+[[rules]]
+name = "itsx_cutasv"
+description = "Cut ITS region from ASV sequences with ITSx"
+when = "config.cut_its != \"none\" && config.its_extractor == \"itsx\""
+input = ["results/dada2/ASV_seqs.fasta"]
+output = [
+    "intermediates/itsx/ASV_ITS_seqs.fasta",
+    "results/itsx/ASV_ITS_seqs.summary.txt",
+    "results/itsx/ITSx.args.txt",
+]
+shell = '''
+mkdir -p results/itsx intermediates/itsx
+SAVE_REGIONS="none"
+[ "{config.cut_its}" = "its1" ] && SAVE_REGIONS="ITS1"
+[ "{config.cut_its}" = "its2" ] && SAVE_REGIONS="ITS2"
+PARTIAL=""
+[ "{config.its_partial}" != "0" ] && PARTIAL="--partial {config.its_partial}"
+ITSx -i {input[0]} -t all --preserve T --date F --positions F --graphical F --save_regions $SAVE_REGIONS $PARTIAL --cpu {threads} -o results/itsx/ASV_ITS_seqs
+# outfile name mirrors upstream (ASV_ITS_seqs.full.fasta / .ITS1.fasta /
+# .ITS2.fasta, with .full_and_partial when its_partial is set)
+if [ "{config.cut_its}" = "full" ]; then OUTF=ASV_ITS_seqs.full.fasta
+elif [ "{config.cut_its}" = "its1" ]; then OUTF=ASV_ITS_seqs.ITS1.fasta
+else OUTF=ASV_ITS_seqs.ITS2.fasta; fi
+if [ "{config.its_partial}" != "0" ]; then
+    if [ "{config.cut_its}" = "full" ]; then OUTF=ASV_ITS_seqs.full_and_partial.fasta
+    else OUTF=${OUTF%.fasta}.full_and_partial.fasta; fi
+fi
+if [ ! -s "results/itsx/$OUTF" ]; then
+    echo "ERROR: No ITS regions found by ITSx. You might want to modify --cut_its and/or --its_partial" >&2
+    exit 1
+fi
+cp "results/itsx/$OUTF" {output[0]}
+echo -e "ITSx\t-t all --preserve T --date F --positions F --graphical F --save_regions $SAVE_REGIONS $PARTIAL" > {output[2]}
+'''
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/itsx:1.1.3--hdfd78af_1"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# ------------------------------------------------------------------
+# R19  ITSXRUST_CUTASV  (process_medium,
+#      quay.io/biocontainers/itsxrust:0.2.2--hdd79491_1)
+#      Same role as itsx_cutasv with the faster Rust implementation;
+#      produces ITS1/ITS2/full files named like ITSx's and a
+#      ITSx-compatible summary from the QC JSON.
+# ------------------------------------------------------------------
+[[rules]]
+name = "itsxrust_cutasv"
+description = "Cut ITS region from ASV sequences with ITSxRust"
+when = "config.cut_its != \"none\" && config.its_extractor == \"itsxrust\""
+input = ["results/dada2/ASV_seqs.fasta"]
+output = [
+    "intermediates/itsx/ASV_ITS_seqs.fasta",
+    "results/itsx/ASV_ITS_seqs.summary.txt",
+    "results/itsx/ITSxRust.args.txt",
+]
+shell = '''
+mkdir -p results/itsx intermediates/itsx work
+HMM_PATH="${CONDA_PREFIX:-/usr/local}/share/itsxrust/hmm/F.hmm"
+# Run ITSxRust with --region all so we always get full + ITS1 + ITS2
+# outputs (mirrors ITSx behavior which always writes all region files)
+itsxrust extract --input {input[0]} --hmm "$HMM_PATH" --hmmer-cpu {threads} --output work/itsx_rust_out --region all --output-format fasta --qc-json work/itsxrust_qc.json
+# ITSxRust --output is a file prefix, so the region files land at
+# work/itsx_rust_out.{its1,its2,full}.fasta. Rename ITS1/ITS2 to ITSx
+# naming (uppercase) when copying into results/itsx/.
+if [ -f work/itsx_rust_out.its1.fasta ]; then cp work/itsx_rust_out.its1.fasta results/itsx/ASV_ITS_seqs.ITS1.fasta; fi
+if [ -f work/itsx_rust_out.its2.fasta ]; then cp work/itsx_rust_out.its2.fasta results/itsx/ASV_ITS_seqs.ITS2.fasta; fi
+if [ -f work/itsx_rust_out.full.fasta ]; then cp work/itsx_rust_out.full.fasta results/itsx/ASV_ITS_seqs.full.fasta; fi
+# Handle partial naming: if its_partial is used, the workflow expects
+# filenames like ASV_ITS_seqs.full_and_partial.fasta
+if [ "{config.its_partial}" != "0" ]; then
+    if [ -f results/itsx/ASV_ITS_seqs.full.fasta ]; then cp results/itsx/ASV_ITS_seqs.full.fasta results/itsx/ASV_ITS_seqs.full_and_partial.fasta; fi
+    if [ -f results/itsx/ASV_ITS_seqs.ITS1.fasta ]; then cp results/itsx/ASV_ITS_seqs.ITS1.fasta results/itsx/ASV_ITS_seqs.ITS1.full_and_partial.fasta; fi
+    if [ -f results/itsx/ASV_ITS_seqs.ITS2.fasta ]; then cp results/itsx/ASV_ITS_seqs.ITS2.fasta results/itsx/ASV_ITS_seqs.ITS2.full_and_partial.fasta; fi
+fi
+# Strip ITSxRust coordinate annotations from FASTA headers (for now)
+# e.g. ">seq1|full:47-433" becomes ">seq1"
+for f in results/itsx/ASV_ITS_seqs.*.fasta; do
+    [ -f "$f" ] && sed -i 's/|[a-z]*[0-9]*:[0-9]*-[0-9]*//' "$f"
+done
+# Select the requested region into the canonical intermediate path
+if [ "{config.cut_its}" = "full" ]; then OUTF=ASV_ITS_seqs.full.fasta
+elif [ "{config.cut_its}" = "its1" ]; then OUTF=ASV_ITS_seqs.ITS1.fasta
+else OUTF=ASV_ITS_seqs.ITS2.fasta; fi
+if [ "{config.its_partial}" != "0" ]; then
+    if [ "{config.cut_its}" = "full" ]; then OUTF=ASV_ITS_seqs.full_and_partial.fasta
+    else OUTF=${OUTF%.fasta}.full_and_partial.fasta; fi
+fi
+if [ ! -s "results/itsx/$OUTF" ]; then
+    echo "ERROR: No ITS regions found by ITSxRust. You might want to modify --cut_its, --its_partial, or --its_extractor options" >&2
+    exit 1
+fi
+cp "results/itsx/$OUTF" {output[0]}
+# Generate ITSx-compatible summary from ITSxRust QC JSON
+if [ -f work/itsxrust_qc.json ]; then
+    total=$(grep -o '"total_reads":[0-9]*' work/itsxrust_qc.json | grep -o '[0-9]*')
+    kept=$(grep -o '"kept":[0-9]*' work/itsxrust_qc.json | grep -o '[0-9]*')
+    skipped=$(grep -o '"skipped":[0-9]*' work/itsxrust_qc.json | grep -o '[0-9]*')
+    echo "ITSxRust extraction summary" > {output[1]}
+    echo "Number of sequences in input file: ${total:-0}" >> {output[1]}
+    echo "Sequences detected as ITS by ITSx: ${kept:-0}" >> {output[1]}
+    echo "Number of sequences skipped: ${skipped:-0}" >> {output[1]}
+else
+    echo "ITSxRust: QC JSON not available" > {output[1]}
+fi
+echo -e "ITSxRust\t" > {output[2]}
+'''
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/itsxrust:0.2.2--hdd79491_1"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# ------------------------------------------------------------------
+# R20  FILTER_LEN_ITSX  (process_single, biostrings)
+#      Length-filter the ITS-cut ASVs to 50..1000000 bp and restrict
+#      the ASV table to the surviving ASVs (upstream
+#      FILTER_LEN_ITSX ext.min_len_asv = 50). Runs in a scratch dir
+#      (the R script writes fixed file names).
+# ------------------------------------------------------------------
+[[rules]]
+name = "filter_len_itsx"
+description = "Length-filter ITS-cut ASV sequences (50 bp minimum) and table"
+when = "config.cut_its != \"none\""
+input = ["intermediates/itsx/ASV_ITS_seqs.fasta", "results/dada2/ASV_table.tsv"]
+output = [
+    "intermediates/dada2/ASV_ITS_seqs.len.fasta",
+    "intermediates/dada2/ASV_table.len.tsv",
+    "results/itsx/ASV_len_orig.tsv",
+    "results/itsx/ASV_len_filt.tsv",
+    "results/itsx/stats.len.tsv",
+]
+shell = '''
+mkdir -p work/filter_len_itsx
+cp {input[0]} work/filter_len_itsx/ASV_ITS_seqs.fasta
+cp {input[1]} work/filter_len_itsx/ASV_table.tsv
+cd work/filter_len_itsx
+Rscript ../../scripts/filter_len.R ASV_ITS_seqs.fasta ASV_table.tsv
+cp ASV_seqs.len.fasta "$OLDPWD/intermediates/dada2/ASV_ITS_seqs.len.fasta"
+cp ASV_table.len.tsv "$OLDPWD/intermediates/dada2/ASV_table.len.tsv"
+cp ASV_len_orig.tsv ASV_len_filt.tsv stats.len.tsv "$OLDPWD/results/itsx/"
+'''
+tags = ["its", "dada2"]
+
+[rules.environment]
+conda = "envs/dada2.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R21  MERGE_STATS_STD  (process_single)
 #      Merge cutadapt summary with DADA2 stats -> overall_summary.tsv
 # ------------------------------------------------------------------
 [[rules]]
@@ -531,7 +765,7 @@ threads = 1
 memory = "1G"
 
 # ------------------------------------------------------------------
-# R19  Reference database download (system backend; upstream does this
+# R22  Reference database download (system backend; upstream does this
 #      in the Nextflow launcher via file(url), outside the container)
 # ------------------------------------------------------------------
 [[rules]]
@@ -555,7 +789,7 @@ threads = 1
 memory = "1G"
 
 # ------------------------------------------------------------------
-# R20  FORMAT_TAXONOMY  (process_single, biocontainers:v1.2.0_cv1)
+# R23  FORMAT_TAXONOMY  (process_single, biocontainers:v1.2.0_cv1)
 #      Reformat downloaded DB files to assignTaxonomy.fna /
 #      addSpecies.fna + ref_taxonomy info file.
 #      Runs in a scratch dir because the reformat script globs "*".
@@ -591,7 +825,7 @@ threads = 1
 memory = "1G"
 
 # ------------------------------------------------------------------
-# R21  DADA2_TAXONOMY + DADA2_ADDSPECIES + collectFile
+# R24  DADA2_TAXONOMY + DADA2_ADDSPECIES + collectFile
 #      (process_high 10 cpus/20G; addSpecies 1 cpu/50G process_long)
 #      Upstream splits ASV_seqs.fasta into chunks of 10000 and runs
 #      assignTaxonomy + addSpecies per chunk, then concatenates with
@@ -603,7 +837,7 @@ memory = "1G"
 [[rules]]
 name = "dada2_taxonomy"
 description = "DADA2 assignTaxonomy + addSpecies with 10000-sequence chunking"
-when = "!config.skip_taxonomy && !config.skip_dada_taxonomy"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy && config.cut_its == \"none\""
 input = [
     "results/dada2/ASV_seqs.fasta",
     "intermediates/dada2/assignTaxonomy.fna",
@@ -640,7 +874,59 @@ memory = "20G"
 time_limit = "24h"
 
 # ------------------------------------------------------------------
-# R22-R25  QIIME2 import + taxa barplot  (process_low, qiime2:2026.4)
+# R25  DADA2_TAXONOMY_WF + DADA2_ADDSPECIES + FORMAT_TAXRESULTS
+#      (ITS branch: cut_its != "none"). assignTaxonomy + addSpecies run
+#      on the ITS-cut, length-filtered ASVs (chunked like the default
+#      path); the resulting tables are mapped back onto the full-length
+#      ASV sequences (upstream FORMAT_TAXRESULTS:
+#      add_full_sequence_to_taxfile.py) and published under the same
+#      results/dada2/ASV_tax*.tsv names as the default path.
+# ------------------------------------------------------------------
+[[rules]]
+name = "dada2_taxonomy_its"
+description = "DADA2 taxonomy on ITS-cut ASVs, mapped back to full ASVs"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy && config.cut_its != \"none\""
+input = [
+    "intermediates/dada2/ASV_ITS_seqs.len.fasta",
+    "results/dada2/ASV_seqs.fasta",
+    "intermediates/dada2/assignTaxonomy.fna",
+    "intermediates/dada2/addSpecies.fna",
+]
+output = [
+    "results/dada2/ASV_tax.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/args/assignTaxonomy.args.txt",
+    "results/dada2/args/addSpecies.args.txt",
+]
+shell = '''
+mkdir -p work/dada2_taxonomy_its
+awk 'BEGIN{n=0;c=0} /^>/{n++; if (n % {config.dada_assign_chunksize} == 1) {c++; if (file) close(file); file=sprintf("work/dada2_taxonomy_its/ASV_ITS_seqs_%d.fasta", c)}} {print > file}' {input[0]}
+for chunk in work/dada2_taxonomy_its/ASV_ITS_seqs_*.fasta; do
+    Rscript scripts/dada2_assign_taxonomy.R "$chunk" {input[2]} ".ASV_ITS_tax.sbdi-gtdb_R11-RS232-1" "{config.dada_assign_taxlevels}" {config.seed} {threads} {config.dada_min_boot} {config.dada_taxonomy_rc} work/dada2_taxonomy_its
+    Rscript scripts/dada2_add_species.R "$(basename "$chunk" .fasta).ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.rds" {input[3]} "{config.dada_assign_taxlevels}" {config.seed} {config.dada_addspecies_allowmultiple} {config.dada_taxonomy_rc} work/dada2_taxonomy_its
+done
+head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv > work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv
+for f in work/dada2_taxonomy_its/ASV_ITS_seqs_*.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv; do tail -n +2 "$f"; done | sort >> work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv
+head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.species.tsv > work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv
+for f in work/dada2_taxonomy_its/ASV_ITS_seqs_*.species.tsv; do tail -n +2 "$f"; done | sort >> work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv
+# Map the ITS-cut taxonomy back onto the full-length ASVs
+python3 scripts/add_full_sequence_to_taxfile.py work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv {input[1]} {output[0]}
+python3 scripts/add_full_sequence_to_taxfile.py work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv {input[1]} {output[1]}
+printf 'assignTaxonomy\tminBoot = {config.dada_min_boot},tryRC = {config.dada_taxonomy_rc}\ntaxlevels\tc("{config.dada_assign_taxlevels}")\nseed\t{config.seed}\n' > {output[2]}
+printf 'addSpecies\tn = 1e5,tryRC = {config.dada_taxonomy_rc}\ntaxlevels\tc("{config.dada_assign_taxlevels}")\nseed\t{config.seed}\n' > {output[3]}
+'''
+tags = ["dada2", "taxonomy", "its"]
+
+[rules.environment]
+conda = "envs/dada2.yaml"
+
+[rules.resources]
+threads = 10
+memory = "20G"
+time_limit = "24h"
+
+# ------------------------------------------------------------------
+# R26-R31  QIIME2 import + taxa barplot  (process_low, qiime2:2026.4)
 #          Minimal QIIME2 slice needed for the default-path barplot.
 #          run_qiime2 gates all four; skip_taxonomy/skip_dada_taxonomy
 #          additionally gate intax + barplot (upstream: empty
@@ -649,7 +935,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_inasv"
 description = "Import ASV table into QIIME2 FeatureTable[Frequency]"
-when = "!config.skip_qiime && config.run_qiime2"
+when = "!config.skip_qiime && config.run_qiime2 && config.cut_its == \"none\""
 input = ["results/dada2/DADA2_table.tsv"]
 output = ["intermediates/qiime2/table.qza"]
 shell = '''
@@ -671,7 +957,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_inseq"
 description = "Import ASV sequences into QIIME2 FeatureData[Sequence]"
-when = "!config.skip_qiime && config.run_qiime2"
+when = "!config.skip_qiime && config.run_qiime2 && config.cut_its == \"none\""
 input = ["results/dada2/ASV_seqs.fasta"]
 output = ["intermediates/qiime2/rep-seqs.qza"]
 shell = '''
@@ -688,10 +974,56 @@ singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 threads = 2
 memory = "3G"
 
+# ITS branch: import the length-filtered ITS table / sequences into the
+# same intermediates/qiime2/ paths as the default branch (the gates of
+# qiime2_inasv/qiime2_inseq and these two are mutually exclusive, so the
+# shared output paths never race).
+[[rules]]
+name = "qiime2_inasv_its"
+description = "Import ITS length-filtered ASV table into QIIME2"
+when = "!config.skip_qiime && config.run_qiime2 && config.cut_its != \"none\""
+input = ["intermediates/dada2/ASV_table.len.tsv"]
+output = ["intermediates/qiime2/table.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_inasv_its/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_inasv_its/numbacache"
+sed '/^# Constructed from biom file/d' {input[0]} > work/qiime2_inasv_its/biom-table.txt
+biom convert -i work/qiime2_inasv_its/biom-table.txt -o work/qiime2_inasv_its/table.biom --table-type="OTU table" --to-hdf5
+qiime tools import --input-path work/qiime2_inasv_its/table.biom --type 'FeatureTable[Frequency]' --input-format BIOMV210Format --output-path {output[0]}
+'''
+tags = ["qiime2", "its"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_inseq_its"
+description = "Import ITS length-filtered ASV sequences into QIIME2"
+when = "!config.skip_qiime && config.run_qiime2 && config.cut_its != \"none\""
+input = ["intermediates/dada2/ASV_ITS_seqs.len.fasta"]
+output = ["intermediates/qiime2/rep-seqs.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_inseq_its/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_inseq_its/numbacache"
+qiime tools import --input-path {input[0]} --type 'FeatureData[Sequence]' --output-path {output[0]}
+'''
+tags = ["qiime2", "its"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
 [[rules]]
 name = "qiime2_intax"
 description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\""
 input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -736,7 +1068,748 @@ threads = 2
 memory = "3G"
 
 # ------------------------------------------------------------------
-# R26  MULTIQC  (process_single)
+# R32-R47  QIIME2 downstream analyses (upstream: subworkflows
+#          qiime2_diversity.nf / qiime2_export.nf / qiime2_ancom.nf /
+#          qiime2_taxonomy.nf + qiime2_preptax.nf).
+#          All gated on run_qiime2 (like the import rules above) plus
+#          !skip_qiime_downstream and their own skip/switch flags,
+#          matching upstream params. The R metadata scripts and the
+#          count_table_minmax_reads.py helper are verbatim upstream
+#          bin/ scripts; category fan-out is done in-shell with a
+#          loop (upstream uses channel combine fan-out).
+#          NOTE: rules whose outputs are data-dependent (metadata
+#          categories, tax_agglom levels) declare the file set for
+#          the default fixture/parameters; other metadata or
+#          tax_agglom_min/max values change the produced files.
+# ------------------------------------------------------------------
+
+# upstream METADATA_ALL + METADATA_PAIRWISE (bin/metadata_all.r and
+# bin/metadata_pairwise.r): non-numeric, non-unique metadata columns,
+# all values occurring >= 2 times (pairwise) / any (all). Runs in the
+# R conda env because the qiime2 container has no Rscript.
+[[rules]]
+name = "qiime2_metadata_categories"
+description = "Select metadata categories for QIIME2 diversity and ANCOM"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && (config.ancom || config.ancombc || config.ancombc2 || !config.skip_diversity_indices)"
+input = ["{config.metadata_file}"]
+output = [
+    "intermediates/qiime2/categories_all.txt",
+    "intermediates/qiime2/categories_pairwise.txt",
+]
+shell = '''
+mkdir -p intermediates/qiime2
+Rscript scripts/metadata_all.r {input[0]} > {output[0]}
+Rscript scripts/metadata_pairwise.r {input[0]} > {output[1]}
+'''
+tags = ["qiime2", "metadata"]
+
+[rules.environment]
+conda = "envs/dada2.yaml"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# QIIME2_TREE: mafft -> mask -> fasttree -> midpoint-root
+[[rules]]
+name = "qiime2_diversity_tree"
+description = "Build rooted phylogenetic tree from representative sequences"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices)"
+input = ["intermediates/qiime2/rep-seqs.qza"]
+output = [
+    "intermediates/qiime2/rooted-tree.qza",
+    "results/qiime2/phylogenetic_tree/tree.nwk",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_diversity_tree/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_diversity_tree/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_diversity_tree/numbacache"
+qiime alignment mafft --i-sequences {input[0]} --o-alignment work/qiime2_diversity_tree/aligned-rep-seqs.qza --p-n-threads {threads}
+qiime alignment mask --i-alignment work/qiime2_diversity_tree/aligned-rep-seqs.qza --o-masked-alignment work/qiime2_diversity_tree/masked-aligned-rep-seqs.qza
+qiime phylogeny fasttree --i-alignment work/qiime2_diversity_tree/masked-aligned-rep-seqs.qza --p-n-threads {threads} --o-tree work/qiime2_diversity_tree/unrooted-tree.qza
+qiime phylogeny midpoint-root --i-tree work/qiime2_diversity_tree/unrooted-tree.qza --o-rooted-tree {output[0]}
+qiime tools export --input-path {output[0]} --output-path results/qiime2/phylogenetic_tree
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# QIIME2_ALPHARAREFACTION: max-depth from the overall stats table
+# (count_table_minmax_reads.py maximum), capped at 75000; steps =
+# 250 (maxdepth > 5000) else maxdepth/20; 10 iterations.
+[[rules]]
+name = "qiime2_alphararefaction"
+description = "QIIME2 alpha-rarefaction curves"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_alpha_rarefaction"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/table.qza",
+    "intermediates/qiime2/rooted-tree.qza",
+    "results/overall_summary.tsv",
+]
+output = [
+    "results/qiime2/alpha-rarefaction/index.html",
+    "results/qiime2/alpha-rarefaction/alpha-rarefaction-shannon.tsv",
+    "results/qiime2/alpha-rarefaction/alpha-rarefaction-observed-features.tsv",
+    "results/qiime2/alpha-rarefaction/alpha-rarefaction-evenness.tsv",
+    "results/qiime2/alpha-rarefaction/alpha-rarefaction-faith-pd.tsv",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_alphararefaction/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_alphararefaction/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_alphararefaction/numbacache"
+maxdepth=$(python3 scripts/count_table_minmax_reads.py {input[3]} maximum)
+if [ "$maxdepth" -gt 75000 ]; then maxdepth=75000; fi
+if [ "$maxdepth" -gt 5000 ]; then maxsteps=250; else maxsteps=$((maxdepth/20)); fi
+qiime diversity alpha-rarefaction --i-table {input[1]} --i-phylogeny {input[2]} --p-max-depth $maxdepth --m-metadata-file {input[0]} --p-steps $maxsteps --p-iterations 10 --o-visualization work/qiime2_alphararefaction/alpha-rarefaction.qzv
+qiime tools export --input-path work/qiime2_alphararefaction/alpha-rarefaction.qzv --output-path results/qiime2/alpha-rarefaction
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_DIVERSITY_CORE: core-metrics-phylogenetic with sampling depth
+# = max(min reads of any sample, diversity_rarefaction_depth floor).
+# The qza outputs land in intermediates/ (they feed the alpha / beta /
+# betaord / adonis rules), the distance matrices are exported as tsv.
+[[rules]]
+name = "qiime2_diversity_core"
+description = "QIIME2 core-metrics-phylogenetic diversity indices"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_diversity_indices"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/table.qza",
+    "intermediates/qiime2/rooted-tree.qza",
+    "results/overall_summary.tsv",
+]
+output = [
+    "intermediates/qiime2/diversity_core/bray_curtis_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/jaccard_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/unweighted_unifrac_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/weighted_unifrac_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/bray_curtis_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/jaccard_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/unweighted_unifrac_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/weighted_unifrac_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/faith_pd_vector.qza",
+    "intermediates/qiime2/diversity_core/observed_features_vector.qza",
+    "intermediates/qiime2/diversity_core/shannon_vector.qza",
+    "intermediates/qiime2/diversity_core/evenness_vector.qza",
+    "results/qiime2/diversity/beta_diversity/bray_curtis_distance_matrix.tsv",
+    "results/qiime2/diversity/beta_diversity/jaccard_distance_matrix.tsv",
+    "results/qiime2/diversity/beta_diversity/unweighted_unifrac_distance_matrix.tsv",
+    "results/qiime2/diversity/beta_diversity/weighted_unifrac_distance_matrix.tsv",
+]
+shell = '''
+# FIX: detecting a viable GPU on your system, but the GPU is unavailable
+# for compute, causing UniFrac to fail (upstream comment).
+export UNIFRAC_USE_GPU=N
+export XDG_CONFIG_HOME="work/qiime2_diversity_core/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_diversity_core/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_diversity_core/numbacache"
+mkdir -p work/qiime2_diversity_core intermediates/qiime2/diversity_core results/qiime2/diversity/beta_diversity
+mindepth=$(python3 scripts/count_table_minmax_reads.py {input[3]} minimum)
+if [ "$mindepth" -lt {config.diversity_rarefaction_depth} ]; then mindepth={config.diversity_rarefaction_depth}; fi
+qiime diversity core-metrics-phylogenetic --m-metadata-file {input[0]} --i-phylogeny {input[2]} --i-table {input[1]} --p-sampling-depth $mindepth --output-dir work/qiime2_diversity_core/diversity_core --p-n-jobs-or-threads {threads} --verbose
+for f in bray_curtis_distance_matrix jaccard_distance_matrix unweighted_unifrac_distance_matrix weighted_unifrac_distance_matrix bray_curtis_pcoa_results jaccard_pcoa_results unweighted_unifrac_pcoa_results weighted_unifrac_pcoa_results faith_pd_vector observed_features_vector shannon_vector evenness_vector; do
+    mv work/qiime2_diversity_core/diversity_core/$f.qza intermediates/qiime2/diversity_core/$f.qza
+done
+for d in bray_curtis_distance_matrix jaccard_distance_matrix unweighted_unifrac_distance_matrix weighted_unifrac_distance_matrix; do
+    qiime tools export --input-path intermediates/qiime2/diversity_core/$d.qza --output-path work/qiime2_diversity_core/matrix
+    mv work/qiime2_diversity_core/matrix/distance-matrix.tsv results/qiime2/diversity/beta_diversity/$d.tsv
+    rm -rf work/qiime2_diversity_core/matrix
+done
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+
+# QIIME2_DIVERSITY_ALPHA: alpha-group-significance on all four
+# diversity vectors (upstream fans the vectors out; the port loops).
+[[rules]]
+name = "qiime2_diversity_alpha"
+description = "QIIME2 alpha diversity group significance tests"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_diversity_indices"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/diversity_core/faith_pd_vector.qza",
+    "intermediates/qiime2/diversity_core/observed_features_vector.qza",
+    "intermediates/qiime2/diversity_core/shannon_vector.qza",
+    "intermediates/qiime2/diversity_core/evenness_vector.qza",
+]
+output = [
+    "results/qiime2/diversity/alpha_diversity/faith_pd_vector/index.html",
+    "results/qiime2/diversity/alpha_diversity/observed_features_vector/index.html",
+    "results/qiime2/diversity/alpha_diversity/shannon_vector/index.html",
+    "results/qiime2/diversity/alpha_diversity/evenness_vector/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_diversity_alpha/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_diversity_alpha/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_diversity_alpha/numbacache"
+for vec in faith_pd_vector observed_features_vector shannon_vector evenness_vector; do
+    qiime diversity alpha-group-significance --i-alpha-diversity intermediates/qiime2/diversity_core/$vec.qza --m-metadata-file {input[0]} --o-visualization work/qiime2_diversity_alpha/$vec-vis.qzv
+    qiime tools export --input-path work/qiime2_diversity_alpha/$vec-vis.qzv --output-path results/qiime2/diversity/alpha_diversity/$vec
+done
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_DIVERSITY_BETA: beta-group-significance per distance matrix x
+# metadata category (pairwise). The category list is data-dependent
+# (default fixture: "group" -> one export dir per distance matrix).
+[[rules]]
+name = "qiime2_diversity_beta"
+description = "QIIME2 beta diversity group significance tests (pairwise)"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_diversity_indices"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/diversity_core/bray_curtis_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/jaccard_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/unweighted_unifrac_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/weighted_unifrac_distance_matrix.qza",
+    "intermediates/qiime2/categories_pairwise.txt",
+]
+output = [
+    "results/qiime2/diversity/beta_diversity/bray_curtis_distance_matrix-group/index.html",
+    "results/qiime2/diversity/beta_diversity/jaccard_distance_matrix-group/index.html",
+    "results/qiime2/diversity/beta_diversity/unweighted_unifrac_distance_matrix-group/index.html",
+    "results/qiime2/diversity/beta_diversity/weighted_unifrac_distance_matrix-group/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_diversity_beta/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_diversity_beta/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_diversity_beta/numbacache"
+CATS=$(cat {input[5]})
+if [ -z "$CATS" ]; then
+    echo "WARNING: no suitable metadata category found for beta-group-significance" >&2
+    exit 0
+fi
+for dist in bray_curtis_distance_matrix jaccard_distance_matrix unweighted_unifrac_distance_matrix weighted_unifrac_distance_matrix; do
+    for cat in $(echo "$CATS" | tr ',' ' '); do
+        qiime diversity beta-group-significance --i-distance-matrix intermediates/qiime2/diversity_core/$dist.qza --m-metadata-file {input[0]} --m-metadata-column "$cat" --o-visualization work/qiime2_diversity_beta/$dist-$cat.qzv --p-pairwise
+        qiime tools export --input-path work/qiime2_diversity_beta/$dist-$cat.qzv --output-path results/qiime2/diversity/beta_diversity/$dist-$cat
+    done
+done
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_DIVERSITY_BETAORD: emperor ordination plots per PCoA.
+[[rules]]
+name = "qiime2_diversity_betaord"
+description = "QIIME2 emperor ordination plots for each beta diversity PCoA"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_diversity_indices"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/diversity_core/bray_curtis_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/jaccard_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/unweighted_unifrac_pcoa_results.qza",
+    "intermediates/qiime2/diversity_core/weighted_unifrac_pcoa_results.qza",
+]
+output = [
+    "results/qiime2/diversity/beta_diversity/bray_curtis_pcoa_results-PCoA/index.html",
+    "results/qiime2/diversity/beta_diversity/jaccard_pcoa_results-PCoA/index.html",
+    "results/qiime2/diversity/beta_diversity/unweighted_unifrac_pcoa_results-PCoA/index.html",
+    "results/qiime2/diversity/beta_diversity/weighted_unifrac_pcoa_results-PCoA/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_diversity_betaord/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_diversity_betaord/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_diversity_betaord/numbacache"
+for pcoa in bray_curtis_pcoa_results jaccard_pcoa_results unweighted_unifrac_pcoa_results weighted_unifrac_pcoa_results; do
+    qiime emperor plot --i-pcoa intermediates/qiime2/diversity_core/$pcoa.qza --m-metadata-file {input[0]} --o-visualization work/qiime2_diversity_betaord/$pcoa-vis.qzv
+    qiime tools export --input-path work/qiime2_diversity_betaord/$pcoa-vis.qzv --output-path results/qiime2/diversity/beta_diversity/$pcoa-PCoA
+done
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_DIVERSITY_ADONIS: PERMANOVA per distance matrix x formula
+# (qiime_adonis_formula, comma-separated). --p-n-jobs 1 (upstream:
+# more than 1 process fails with QIIME2 2026.4.0).
+[[rules]]
+name = "qiime2_diversity_adonis"
+description = "QIIME2 adonis PERMANOVA tests on distance matrices"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_diversity_indices && config.qiime_adonis_formula != \"\""
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/diversity_core/bray_curtis_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/jaccard_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/unweighted_unifrac_distance_matrix.qza",
+    "intermediates/qiime2/diversity_core/weighted_unifrac_distance_matrix.qza",
+]
+output = [
+    "results/qiime2/diversity/beta_diversity/adonis/bray_curtis_distance_matrix-group/index.html",
+    "results/qiime2/diversity/beta_diversity/adonis/jaccard_distance_matrix-group/index.html",
+    "results/qiime2/diversity/beta_diversity/adonis/unweighted_unifrac_distance_matrix-group/index.html",
+    "results/qiime2/diversity/beta_diversity/adonis/weighted_unifrac_distance_matrix-group/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_diversity_adonis/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_diversity_adonis/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_diversity_adonis/numbacache"
+for formula in $(echo {config.qiime_adonis_formula} | tr ',' ' '); do
+    for dist in bray_curtis_distance_matrix jaccard_distance_matrix unweighted_unifrac_distance_matrix weighted_unifrac_distance_matrix; do
+        qiime diversity adonis --p-n-jobs 1 --i-distance-matrix intermediates/qiime2/diversity_core/$dist.qza --m-metadata-file {input[0]} --o-visualization work/qiime2_diversity_adonis/${dist}_adonis.qzv --p-formula "$formula"
+        qiime tools export --input-path work/qiime2_diversity_adonis/${dist}_adonis.qzv --output-path results/qiime2/diversity/beta_diversity/adonis/$dist-$formula
+    done
+done
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_EXPORT_ABSOLUTE: raw count table + representative sequences +
+# collapsed absolute abundance tables per tax level
+# (tax_agglom_min..tax_agglom_max).
+[[rules]]
+name = "qiime2_export_absolute"
+description = "Export QIIME2 table, representative sequences and absolute abundance tables"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_abundance_tables && !config.skip_taxonomy"
+input = [
+    "intermediates/qiime2/table.qza",
+    "intermediates/qiime2/rep-seqs.qza",
+    "intermediates/qiime2/taxonomy.qza",
+]
+output = [
+    "results/qiime2/abundance_tables/feature-table.tsv",
+    "results/qiime2/abundance_tables/abs-abund-table-2.tsv",
+    "results/qiime2/abundance_tables/abs-abund-table-3.tsv",
+    "results/qiime2/abundance_tables/abs-abund-table-4.tsv",
+    "results/qiime2/abundance_tables/abs-abund-table-5.tsv",
+    "results/qiime2/abundance_tables/abs-abund-table-6.tsv",
+    "results/qiime2/representative_sequences/rep-seq.fasta",
+    "results/qiime2/representative_sequences/sequences.fasta",
+    "results/qiime2/representative_sequences/descriptive_stats.tsv",
+    "results/qiime2/representative_sequences/seven_number_summary.tsv",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_export_absolute/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_export_absolute/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_export_absolute/numbacache"
+mkdir -p results/qiime2/abundance_tables results/qiime2/representative_sequences
+# raw count table in biom + tsv format
+qiime tools export --input-path {input[0]} --output-path work/qiime2_export_absolute/table
+biom convert -i work/qiime2_export_absolute/table/feature-table.biom -o results/qiime2/abundance_tables/feature-table.tsv --to-tsv
+# representative sequence fasta
+qiime feature-table tabulate-seqs --i-data {input[1]} --o-visualization work/qiime2_export_absolute/rep-seqs.qzv
+qiime tools export --input-path work/qiime2_export_absolute/rep-seqs.qzv --output-path results/qiime2/representative_sequences
+cp results/qiime2/representative_sequences/sequences.fasta results/qiime2/representative_sequences/rep-seq.fasta
+# absolute abundance tables per tax level
+for i in $(seq {config.tax_agglom_min} 1 {config.tax_agglom_max}); do
+    qiime taxa collapse --i-table {input[0]} --i-taxonomy {input[2]} --p-level $i --o-collapsed-table work/qiime2_export_absolute/table-$i.qza
+    qiime tools export --input-path work/qiime2_export_absolute/table-$i.qza --output-path work/qiime2_export_absolute/table-$i
+    biom convert -i work/qiime2_export_absolute/table-$i/feature-table.biom -o results/qiime2/abundance_tables/abs-abund-table-$i.tsv --to-tsv
+done
+'''
+tags = ["qiime2", "export"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_EXPORT_RELASV: relative abundance table at ASV level.
+[[rules]]
+name = "qiime2_export_relasv"
+description = "Export QIIME2 relative abundance table at ASV level"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_abundance_tables && !config.skip_taxonomy"
+input = ["intermediates/qiime2/table.qza"]
+output = ["results/qiime2/rel_abundance_tables/rel-table-ASV.tsv"]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_export_relasv/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_export_relasv/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_export_relasv/numbacache"
+mkdir -p results/qiime2/rel_abundance_tables
+qiime feature-table relative-frequency --i-table {input[0]} --o-relative-frequency-table work/qiime2_export_relasv/relative-table-ASV.qza
+qiime tools export --input-path work/qiime2_export_relasv/relative-table-ASV.qza --output-path work/qiime2_export_relasv/relative-table-ASV
+biom convert -i work/qiime2_export_relasv/relative-table-ASV/feature-table.biom -o {output[0]} --to-tsv
+'''
+tags = ["qiime2", "export"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_EXPORT_RELTAX: relative abundance tables per tax level.
+[[rules]]
+name = "qiime2_export_reltax"
+description = "Export QIIME2 relative abundance tables per tax level"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_abundance_tables && !config.skip_taxonomy"
+input = ["intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
+output = [
+    "results/qiime2/rel_abundance_tables/rel-table-2.tsv",
+    "results/qiime2/rel_abundance_tables/rel-table-3.tsv",
+    "results/qiime2/rel_abundance_tables/rel-table-4.tsv",
+    "results/qiime2/rel_abundance_tables/rel-table-5.tsv",
+    "results/qiime2/rel_abundance_tables/rel-table-6.tsv",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_export_reltax/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_export_reltax/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_export_reltax/numbacache"
+mkdir -p results/qiime2/rel_abundance_tables
+for i in $(seq {config.tax_agglom_min} 1 {config.tax_agglom_max}); do
+    qiime taxa collapse --i-table {input[0]} --i-taxonomy {input[1]} --p-level $i --o-collapsed-table work/qiime2_export_reltax/table-$i.qza
+    qiime feature-table relative-frequency --i-table work/qiime2_export_reltax/table-$i.qza --o-relative-frequency-table work/qiime2_export_reltax/relative-table-$i.qza
+    qiime tools export --input-path work/qiime2_export_reltax/relative-table-$i.qza --output-path work/qiime2_export_reltax/relative-table-$i
+    biom convert -i work/qiime2_export_reltax/relative-table-$i/feature-table.biom -o results/qiime2/rel_abundance_tables/rel-table-$i.tsv --to-tsv
+done
+'''
+tags = ["qiime2", "export"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# QIIME2_ANCOM (ANCOM_ASV + ANCOM_TAX): samples without a metadata
+# value for the category are filtered out first (FILTERSAMPLES), then
+# ANCOM runs at ASV level and per tax level; levels collapsing to
+# < 2 taxa write a WARNING file instead (upstream error_ignore).
+[[rules]]
+name = "qiime2_ancom"
+description = "QIIME2 ANCOM differential abundance at ASV and tax levels"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_taxonomy && config.ancom"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/table.qza",
+    "intermediates/qiime2/taxonomy.qza",
+    "intermediates/qiime2/categories_all.txt",
+]
+output = [
+    "results/qiime2/ancom/Category-group-ASV/index.html",
+    "results/qiime2/ancom/Category-group-level-2/index.html",
+    "results/qiime2/ancom/Category-group-level-3/index.html",
+    "results/qiime2/ancom/Category-group-level-4/index.html",
+    "results/qiime2/ancom/Category-group-level-5/index.html",
+    "results/qiime2/ancom/Category-group-level-6/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_ancom/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_ancom/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_ancom/numbacache"
+mkdir -p results/qiime2/ancom
+CATS=$(cat {input[3]})
+if [ -z "$CATS" ]; then
+    echo "WARNING: no suitable metadata category found for ANCOM" >&2
+    exit 0
+fi
+for cat in $(echo "$CATS" | tr ',' ' '); do
+    qiime feature-table filter-samples --i-table {input[1]} --m-metadata-file {input[0]} --p-where "${cat}<>''" --o-filtered-table work/qiime2_ancom/${cat}.qza
+    qiime composition add-pseudocount --i-table work/qiime2_ancom/${cat}.qza --o-composition-table work/qiime2_ancom/comp-${cat}.qza
+    qiime composition ancom --i-table work/qiime2_ancom/comp-${cat}.qza --m-metadata-file {input[0]} --m-metadata-column $cat --o-visualization work/qiime2_ancom/comp-${cat}.qzv
+    qiime tools export --input-path work/qiime2_ancom/comp-${cat}.qzv --output-path results/qiime2/ancom/Category-${cat}-ASV
+    for lvl in $(seq {config.tax_agglom_min} 1 {config.tax_agglom_max}); do
+        qiime taxa collapse --i-table work/qiime2_ancom/${cat}.qza --i-taxonomy {input[2]} --p-level $lvl --o-collapsed-table work/qiime2_ancom/lvl${lvl}-${cat}.qza
+        qiime tools export --input-path work/qiime2_ancom/lvl${lvl}-${cat}.qza --output-path work/qiime2_ancom/exported
+        biom convert -i work/qiime2_ancom/exported/feature-table.biom -o work/qiime2_ancom/${cat}-level-${lvl}.feature-table.tsv --to-tsv
+        rm -rf work/qiime2_ancom/exported
+        if [ $(grep -v '^#' -c work/qiime2_ancom/${cat}-level-${lvl}.feature-table.tsv) -lt 2 ]; then
+            echo "Summing your data at taxonomic level $lvl produced less than two rows (taxa), ANCOM can't proceed -- did you specify a bad reference taxonomy?" > results/qiime2/ancom/Category-${cat}-level-${lvl}.WARNING.txt
+        else
+            qiime composition add-pseudocount --i-table work/qiime2_ancom/lvl${lvl}-${cat}.qza --o-composition-table work/qiime2_ancom/comp-lvl${lvl}-${cat}.qza
+            qiime composition ancom --i-table work/qiime2_ancom/comp-lvl${lvl}-${cat}.qza --m-metadata-file {input[0]} --m-metadata-column $cat --o-visualization work/qiime2_ancom/comp-lvl${lvl}-${cat}.qzv
+            qiime tools export --input-path work/qiime2_ancom/comp-lvl${lvl}-${cat}.qzv --output-path results/qiime2/ancom/Category-${cat}-level-${lvl}
+        fi
+    done
+done
+'''
+tags = ["qiime2", "differential-abundance"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+time_limit = "24h"
+
+# QIIME2_ANCOMBC (ANCOMBC_ASV + ANCOMBC_TAX, incl. the
+# ancombc_formula variants which run on the unfiltered table):
+# ancombc + tabulate + da-barplot per category/formula and tax level.
+[[rules]]
+name = "qiime2_ancombc"
+description = "QIIME2 ANCOM-BC differential abundance at ASV and tax levels"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_taxonomy && (config.ancombc || config.ancombc_formula != \"\")"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/table.qza",
+    "intermediates/qiime2/taxonomy.qza",
+    "intermediates/qiime2/categories_all.txt",
+]
+output = [
+    "results/qiime2/ancombc/differentials/Category-group-ASV/index.html",
+    "results/qiime2/ancombc/da_barplot/Category-group-ASV/index.html",
+    "results/qiime2/ancombc/differentials/Category-group-level-2/index.html",
+    "results/qiime2/ancombc/differentials/Category-group-level-3/index.html",
+    "results/qiime2/ancombc/differentials/Category-group-level-4/index.html",
+    "results/qiime2/ancombc/differentials/Category-group-level-5/index.html",
+    "results/qiime2/ancombc/differentials/Category-group-level-6/index.html",
+    "results/qiime2/ancombc/da_barplot/Category-group-level-2/index.html",
+    "results/qiime2/ancombc/da_barplot/Category-group-level-3/index.html",
+    "results/qiime2/ancombc/da_barplot/Category-group-level-4/index.html",
+    "results/qiime2/ancombc/da_barplot/Category-group-level-5/index.html",
+    "results/qiime2/ancombc/da_barplot/Category-group-level-6/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_ancombc/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_ancombc/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_ancombc/numbacache"
+mkdir -p results/qiime2/ancombc
+# formula variants run on the unfiltered table (upstream ANCOMBC_FORMULA_*)
+if [ -n "{config.ancombc_formula}" ]; then FORMULAS=$(echo {config.ancombc_formula} | tr ',' ' '); UNFILTERED=1; else FORMULAS=$(cat {input[3]}); UNFILTERED=0; fi
+if [ -z "$FORMULAS" ]; then
+    echo "WARNING: no suitable metadata category/formula found for ANCOM-BC" >&2
+    exit 0
+fi
+for formula in $FORMULAS; do
+    if [ "$UNFILTERED" = "1" ]; then TBL={input[1]}; else
+        qiime feature-table filter-samples --i-table {input[1]} --m-metadata-file {input[0]} --p-where "${formula}<>''" --o-filtered-table work/qiime2_ancombc/${formula}.qza
+        TBL=work/qiime2_ancombc/${formula}.qza
+    fi
+    qiime composition ancombc --i-table "$TBL" --m-metadata-file {input[0]} --p-prv-cut 0.1 --p-lib-cut 500 --p-alpha 0.05 --p-conserve --p-formula "$formula" --o-differentials work/qiime2_ancombc/${formula}.differentials.qza --verbose
+    qiime tools export --input-path work/qiime2_ancombc/${formula}.differentials.qza --output-path results/qiime2/ancombc/differentials/Category-${formula}-ASV
+    qiime composition tabulate --i-data work/qiime2_ancombc/${formula}.differentials.qza --o-visualization work/qiime2_ancombc/${formula}.differentials.qzv
+    qiime tools export --input-path work/qiime2_ancombc/${formula}.differentials.qzv --output-path results/qiime2/ancombc/differentials/Category-${formula}-ASV
+    qiime composition da-barplot --i-data work/qiime2_ancombc/${formula}.differentials.qza --p-effect-size-threshold {config.ancombc_effect_size} --p-significance-threshold {config.ancombc_significance} --p-label-limit 1000 --o-visualization work/qiime2_ancombc/${formula}.da_barplot.qzv
+    qiime tools export --input-path work/qiime2_ancombc/${formula}.da_barplot.qzv --output-path results/qiime2/ancombc/da_barplot/Category-${formula}-ASV
+    for lvl in $(seq {config.tax_agglom_min} 1 {config.tax_agglom_max}); do
+        qiime taxa collapse --i-table "$TBL" --i-taxonomy {input[2]} --p-level $lvl --o-collapsed-table work/qiime2_ancombc/lvl${lvl}-${formula}.qza
+        qiime tools export --input-path work/qiime2_ancombc/lvl${lvl}-${formula}.qza --output-path work/qiime2_ancombc/exported
+        biom convert -i work/qiime2_ancombc/exported/feature-table.biom -o work/qiime2_ancombc/lvl${lvl}-${formula}.feature-table.tsv --to-tsv
+        rm -rf work/qiime2_ancombc/exported
+        if [ $(grep -v '^#' -c work/qiime2_ancombc/lvl${lvl}-${formula}.feature-table.tsv) -lt 2 ]; then
+            echo "Summing your data at taxonomic level $lvl produced less than two rows (taxa), ANCOMBC can't proceed -- did you specify a bad reference taxonomy?" > results/qiime2/ancombc/differentials/Category-${formula}-level-${lvl}.WARNING.txt
+            echo "Summing your data at taxonomic level $lvl produced less than two rows (taxa), ANCOMBC can't proceed -- did you specify a bad reference taxonomy?" > results/qiime2/ancombc/da_barplot/Category-${formula}-level-${lvl}.WARNING.txt
+        else
+            qiime composition ancombc --i-table work/qiime2_ancombc/lvl${lvl}-${formula}.qza --m-metadata-file {input[0]} --p-prv-cut 0.1 --p-lib-cut 500 --p-alpha 0.05 --p-conserve --p-formula "$formula" --o-differentials work/qiime2_ancombc/lvl${lvl}-${formula}.differentials.qza --verbose
+            qiime tools export --input-path work/qiime2_ancombc/lvl${lvl}-${formula}.differentials.qza --output-path results/qiime2/ancombc/differentials/Category-${formula}-level-${lvl}
+            qiime composition tabulate --i-data work/qiime2_ancombc/lvl${lvl}-${formula}.differentials.qza --o-visualization work/qiime2_ancombc/lvl${lvl}-${formula}.differentials.qzv
+            qiime tools export --input-path work/qiime2_ancombc/lvl${lvl}-${formula}.differentials.qzv --output-path results/qiime2/ancombc/differentials/Category-${formula}-level-${lvl}
+            qiime composition da-barplot --i-data work/qiime2_ancombc/lvl${lvl}-${formula}.differentials.qza --p-effect-size-threshold {config.ancombc_effect_size} --p-significance-threshold {config.ancombc_significance} --p-label-limit 1000 --o-visualization work/qiime2_ancombc/lvl${lvl}-${formula}.da_barplot.qzv
+            qiime tools export --input-path work/qiime2_ancombc/lvl${lvl}-${formula}.da_barplot.qzv --output-path results/qiime2/ancombc/da_barplot/Category-${formula}-level-${lvl}
+        fi
+    done
+done
+'''
+tags = ["qiime2", "differential-abundance"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+time_limit = "24h"
+
+# QIIME2_ANCOMBC2 (ANCOMBC2_ASV + ANCOMBC2_TAX, incl. the
+# ancombc2_formula variants): ancombc2 + tabulate + visualizer +
+# volcano plot per category/formula and tax level.
+[[rules]]
+name = "qiime2_ancombc2"
+description = "QIIME2 ANCOM-BC2 differential abundance at ASV and tax levels"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && !config.skip_taxonomy && (config.ancombc2 || config.ancombc2_formula != \"\")"
+input = [
+    "{config.metadata_file}",
+    "intermediates/qiime2/table.qza",
+    "intermediates/qiime2/taxonomy.qza",
+    "intermediates/qiime2/categories_all.txt",
+]
+output = [
+    "results/qiime2/ancombc2/Category-group-ASV/differentials/index.html",
+    "results/qiime2/ancombc2/Category-group-ASV/ASV-group.visualizer.qzv",
+    "results/qiime2/ancombc2/Category-group-ASV/ASV-group.volcano_plot.svg",
+    "results/qiime2/ancombc2/Category-group-level-2/differentials/index.html",
+    "results/qiime2/ancombc2/Category-group-level-3/differentials/index.html",
+    "results/qiime2/ancombc2/Category-group-level-4/differentials/index.html",
+    "results/qiime2/ancombc2/Category-group-level-5/differentials/index.html",
+    "results/qiime2/ancombc2/Category-group-level-6/differentials/index.html",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_ancombc2/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_ancombc2/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_ancombc2/numbacache"
+mkdir -p results/qiime2/ancombc2
+if [ -n "{config.ancombc2_formula}" ]; then FORMULAS=$(echo {config.ancombc2_formula} | tr ',' ' '); UNFILTERED=1; else FORMULAS=$(cat {input[3]}); UNFILTERED=0; fi
+if [ -z "$FORMULAS" ]; then
+    echo "WARNING: no suitable metadata category/formula found for ANCOM-BC2" >&2
+    exit 0
+fi
+for formula in $FORMULAS; do
+    if [ "$UNFILTERED" = "1" ]; then TBL={input[1]}; else
+        qiime feature-table filter-samples --i-table {input[1]} --m-metadata-file {input[0]} --p-where "${formula}<>''" --o-filtered-table work/qiime2_ancombc2/${formula}.qza
+        TBL=work/qiime2_ancombc2/${formula}.qza
+    fi
+    # ASV-level
+    qiime composition ancombc2 --i-table "$TBL" --m-metadata-file {input[0]} --p-p-adjust-method "holm" --p-prevalence-cutoff 0.1 --p-alpha 0.05 --p-fixed-effects-formula "$formula" --o-ancombc2-output work/qiime2_ancombc2/ASV-${formula}.differentials.qza --p-num-processes {threads} --verbose
+    qiime tools export --input-path work/qiime2_ancombc2/ASV-${formula}.differentials.qza --output-path results/qiime2/ancombc2/Category-${formula}-ASV/differentials
+    qiime composition tabulate --i-data work/qiime2_ancombc2/ASV-${formula}.differentials.qza --o-visualization work/qiime2_ancombc2/ASV-${formula}.differentials.qzv
+    qiime tools export --input-path work/qiime2_ancombc2/ASV-${formula}.differentials.qzv --output-path results/qiime2/ancombc2/Category-${formula}-ASV/differentials
+    qiime composition ancombc2-visualizer --i-data work/qiime2_ancombc2/ASV-${formula}.differentials.qza --o-visualization work/qiime2_ancombc2/ASV-${formula}.visualizer.qzv
+    # 'qiime tools export' does not produce a valid html
+    mv work/qiime2_ancombc2/ASV-${formula}.visualizer.qzv results/qiime2/ancombc2/Category-${formula}-ASV/ASV-${formula}.visualizer.qzv
+    # volcano plot
+    cd results/qiime2/ancombc2/Category-${formula}-ASV
+    Rscript ../../../../scripts/ancombc_volcanoplot.r differentials/lfc.jsonl differentials/q.jsonl 0.05 1 0 differentials/p.jsonl differentials/se.jsonl differentials/passed_ss.jsonl "ASV-"
+    cd "$OLDPWD"
+    for lvl in $(seq {config.tax_agglom_min} 1 {config.tax_agglom_max}); do
+        qiime taxa collapse --i-table "$TBL" --i-taxonomy {input[2]} --p-level $lvl --o-collapsed-table work/qiime2_ancombc2/lvl${lvl}-${formula}.qza
+        qiime tools export --input-path work/qiime2_ancombc2/lvl${lvl}-${formula}.qza --output-path work/qiime2_ancombc2/exported
+        biom convert -i work/qiime2_ancombc2/exported/feature-table.biom -o work/qiime2_ancombc2/lvl${lvl}-${formula}.feature-table.tsv --to-tsv
+        rm -rf work/qiime2_ancombc2/exported
+        if [ $(grep -v '^#' -c work/qiime2_ancombc2/lvl${lvl}-${formula}.feature-table.tsv) -lt 2 ]; then
+            mkdir -p results/qiime2/ancombc2/Category-${formula}-level-${lvl}/differentials
+            echo "Summing your data at taxonomic level $lvl produced less than two rows (taxa), ANCOMBC2 can't proceed -- did you specify a bad reference taxonomy?" > results/qiime2/ancombc2/Category-${formula}-level-${lvl}/differentials/WARNING.txt
+        else
+            qiime composition ancombc2 --i-table work/qiime2_ancombc2/lvl${lvl}-${formula}.qza --m-metadata-file {input[0]} --p-p-adjust-method "holm" --p-prevalence-cutoff 0.1 --p-alpha 0.05 --p-fixed-effects-formula "$formula" --o-ancombc2-output work/qiime2_ancombc2/lvl${lvl}-${formula}.differentials.qza --p-num-processes {threads} --verbose
+            qiime tools export --input-path work/qiime2_ancombc2/lvl${lvl}-${formula}.differentials.qza --output-path results/qiime2/ancombc2/Category-${formula}-level-${lvl}/differentials
+            qiime composition tabulate --i-data work/qiime2_ancombc2/lvl${lvl}-${formula}.differentials.qza --o-visualization work/qiime2_ancombc2/lvl${lvl}-${formula}.differentials.qzv
+            qiime tools export --input-path work/qiime2_ancombc2/lvl${lvl}-${formula}.differentials.qzv --output-path results/qiime2/ancombc2/Category-${formula}-level-${lvl}/differentials
+            qiime composition ancombc2-visualizer --i-data work/qiime2_ancombc2/lvl${lvl}-${formula}.differentials.qza --o-visualization work/qiime2_ancombc2/lvl${lvl}-${formula}.visualizer.qzv
+            mv work/qiime2_ancombc2/lvl${lvl}-${formula}.visualizer.qzv results/qiime2/ancombc2/Category-${formula}-level-${lvl}/lvl${lvl}-${formula}.visualizer.qzv
+            cd results/qiime2/ancombc2/Category-${formula}-level-${lvl}
+            Rscript ../../../../scripts/ancombc_volcanoplot.r differentials/lfc.jsonl differentials/q.jsonl 0.05 1 0 differentials/p.jsonl differentials/se.jsonl differentials/passed_ss.jsonl "lvl${lvl}-"
+            cd "$OLDPWD"
+        fi
+    done
+done
+'''
+tags = ["qiime2", "differential-abundance"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 6
+memory = "6G"
+time_limit = "24h"
+
+# QIIME2_PREPTAX (qiime2_preptax.nf + qiime2_extract.nf +
+# qiime2_train.nf): download the SILVA qza reference pair, reformat to
+# silva.fna/silva.tax (taxref_reformat_qiime_silva138.sh), import,
+# extract primer regions with the configured primers and train a
+# Naive-Bayes classifier. Requires FW_primer/RV_primer (like
+# upstream: extract-reads with empty primers fails in QIIME2).
+[[rules]]
+name = "qiime2_preptax"
+description = "Train a QIIME2 Naive-Bayes classifier from the SILVA reference"
+when = "config.run_qiime2 && !config.skip_taxonomy && config.qiime_ref_taxonomy != \"\""
+input = []
+output = ["intermediates/qiime2/classifier.qza"]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_preptax/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_preptax/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_preptax/numbacache"
+mkdir -p work/qiime2_preptax intermediates/qiime2
+cd work/qiime2_preptax
+curl -fsSL -o ref_seqs.qza $(echo {config.qiime_ref_taxonomy_urls} | cut -d, -f1)
+curl -fsSL -o ref_tax.qza $(echo {config.qiime_ref_taxonomy_urls} | cut -d, -f2)
+sh ../../scripts/taxref_reformat_qiime_silva138.sh
+qiime tools import --type 'FeatureData[Sequence]' --input-path silva.fna --output-path ref-seq.qza
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path silva.tax --output-path ref-taxonomy.qza
+qiime feature-classifier extract-reads --p-n-jobs {threads} --i-sequences ref-seq.qza --p-f-primer {config.FW_primer} --p-r-primer {config.RV_primer} --o-reads ref-seq-extracted.qza --quiet
+qiime feature-classifier fit-classifier-naive-bayes --i-reference-reads ref-seq-extracted.qza --i-reference-taxonomy ref-taxonomy.qza --o-classifier "$OLDPWD/intermediates/qiime2/classifier.qza" --quiet
+'''
+tags = ["qiime2", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 10
+memory = "20G"
+time_limit = "24h"
+
+# QIIME2_CLASSIFY (qiime2_classify.nf): classify-sklearn with the
+# trained classifier (or a user-supplied pre-trained one via
+# config.classifier — copied in-shell to the same intermediate path),
+# then tabulate + export. The taxonomy.qza lands at the same path the
+# qiime2_intax rule writes, so qiime2_barplot / exports consume
+# whichever taxonomy was produced (the two rules are mutually
+# exclusive via their gates).
+[[rules]]
+name = "qiime2_classify"
+description = "Classify ASVs with a trained QIIME2 classifier"
+when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.classifier != \"\")"
+input = ["intermediates/qiime2/rep-seqs.qza", "intermediates/qiime2/classifier.qza"]
+output = [
+    "intermediates/qiime2/taxonomy.qza",
+    "results/qiime2/taxonomy/taxonomy.tsv",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_classify/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_classify/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_classify/numbacache"
+mkdir -p work/qiime2_classify results/qiime2/taxonomy
+# user-supplied pre-trained classifier (skips qiime2_preptax training)
+if [ -n "{config.classifier}" ] && [ ! -f intermediates/qiime2/classifier.qza ]; then
+    cp {config.classifier} intermediates/qiime2/classifier.qza
+fi
+qiime feature-classifier classify-sklearn --i-classifier intermediates/qiime2/classifier.qza --p-n-jobs {threads} --i-reads {input[0]} --o-classification work/qiime2_classify/taxonomy.qza --verbose
+qiime metadata tabulate --m-input-file work/qiime2_classify/taxonomy.qza --o-visualization work/qiime2_classify/taxonomy.qzv --verbose
+qiime tools export --input-path work/qiime2_classify/taxonomy.qza --output-path results/qiime2/taxonomy
+qiime tools export --input-path work/qiime2_classify/taxonomy.qzv --output-path results/qiime2/taxonomy
+cp work/qiime2_classify/taxonomy.qza {output[0]}
+'''
+tags = ["qiime2", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 10
+memory = "20G"
+time_limit = "24h"
+
+# ------------------------------------------------------------------
+# R48  MULTIQC  (process_single)
 #      MultiQC aggregates fastqc zips + cutadapt logs in a scratch
 #      dir (multiqc scans its cwd ".")
 # ------------------------------------------------------------------
@@ -766,3 +1839,54 @@ conda = "envs/multiqc.yaml"
 [rules.resources]
 threads = 1
 memory = "1G"
+
+# ------------------------------------------------------------------
+# R49  PICRUST  (process_high + process_medium_memory:
+#      10 cpus / 50G / 24h)
+#      Functional predictions from the ASV table. Upstream picks a
+#      QIIME2-filtered or the raw DADA2 source depending on the run
+#      configuration; the port always uses the DADA2 source (the
+#      QIIME2 source additionally requires run_qiime2 + abundance
+#      tables + a taxonomy — see README deviations). The pipeline
+#      writes a fixed "all_output" dir plus flat *_descrip.tsv files
+#      in its cwd, so it runs in a scratch dir and the results are
+#      copied back. The upstream source-message file (filename == the
+#      message text) is written as picrust_message.txt instead.
+# ------------------------------------------------------------------
+[[rules]]
+name = "picrust"
+description = "PICRUSt2 functional predictions from the ASV table"
+when = "config.picrust"
+input = [
+    "results/dada2/ASV_seqs.fasta",
+    "results/dada2/ASV_table.tsv",
+]
+output = [
+    "results/picrust/EC_pred_metagenome_unstrat_descrip.tsv",
+    "results/picrust/KO_pred_metagenome_unstrat_descrip.tsv",
+    "results/picrust/METACYC_path_abun_unstrat_descrip.tsv",
+    "results/picrust/picrust.args.txt",
+    "results/picrust/picrust_message.txt",
+]
+shell = '''
+mkdir -p work/picrust results/picrust
+cp {input[0]} work/picrust/ASV_seqs.fasta
+cp {input[1]} work/picrust/ASV_table.tsv
+cd work/picrust
+picrust2_pipeline.py -t epa-ng --remove_intermediate -s ASV_seqs.fasta -i ASV_table.tsv -o all_output -p {threads} --in_traits EC,KO --verbose
+add_descriptions.py -i all_output/EC_metagenome_out/pred_metagenome_unstrat.tsv.gz -m EC -o EC_pred_metagenome_unstrat_descrip.tsv
+add_descriptions.py -i all_output/KO_metagenome_out/pred_metagenome_unstrat.tsv.gz -m KO -o KO_pred_metagenome_unstrat_descrip.tsv
+add_descriptions.py -i all_output/pathways_out/path_abun_unstrat.tsv.gz -m METACYC -o METACYC_path_abun_unstrat_descrip.tsv
+echo "This Picrust2 analysis is based on unfiltered reads from DADA2" > picrust_message.txt
+echo -e "picrust\\t-t epa-ng --remove_intermediate" > picrust.args.txt
+cp EC_pred_metagenome_unstrat_descrip.tsv KO_pred_metagenome_unstrat_descrip.tsv METACYC_path_abun_unstrat_descrip.tsv picrust.args.txt picrust_message.txt "$OLDPWD/results/picrust/"
+'''
+tags = ["functional-prediction"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/picrust2:2.6.3--pyhdfd78af_0"
+
+[rules.resources]
+threads = 10
+memory = "50G"
+time_limit = "24h"
