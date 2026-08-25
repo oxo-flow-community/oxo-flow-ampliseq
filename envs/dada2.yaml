@@ -13,3 +13,7 @@ dependencies:
   - bioconductor-dada2=1.26
   - r-base=4.2
   - r-digest
+  # bioconductor-biostrings for the ITS length filter (upstream
+  # FILTER_LEN_ITSX uses biostrings 2.58.0 with r-base 4.0.3; 2.66.0 is
+  # the R 4.2 build)
+  - bioconductor-biostrings=2.66.0
