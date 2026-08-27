@@ -12,7 +12,7 @@
     "license": "MIT"
   },
   "created": "2026-08-15",
-  "updated": "2026-08-26",
+  "updated": "2026-08-27",
   "domain": "amplicon",
   "tags": ["amplicon", "16s", "its", "dada2", "qiime2", "picrust", "nf-core"],
   "scope": [
@@ -70,7 +70,7 @@
     "nanopore: nanopore sequencing branch (params.nanopore) — absent from the 2.18.0 codebase (grep-verified; only docs/usage.md mentions Nanopore re ITSxRust long reads)",
     "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)",
     "versions.yml: per-module tool version files — the port pins versions in the env files / container tags instead",
-    "report generators gated by additional params off by default (SBDI export, phyloseq/TSE objects, summary report)"
+    "report generators not ported: SBDI export (params.sbdiexport, default false — off by default upstream); phyloseq/TSE R objects and the Rmd summary report (default-on upstream — params.skip_phyloseq/skip_tse/skip_report all default false)"
   ],
   "rule_count": 49,
   "tools": [
