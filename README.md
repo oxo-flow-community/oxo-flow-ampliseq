@@ -20,7 +20,7 @@ summary report that aggregates everything into one document.
 
 ### 1. Install oxo-flow
 
-Requires **oxo-flow >= 0.12.0**. Install the prebuilt release binary
+Requires **oxo-flow >= 0.17.0**. Install the prebuilt release binary
 (recommended):
 
 ```bash
@@ -167,7 +167,8 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | QIIME2_PREPTAX (incl. EXTRACT + TRAIN) | `qiime2_preptax` | qiime2 2026.4 | identical: downloads the `qiime_ref_taxonomy_urls` qza pair, `bin/taxref_reformat_qiime_silva138.sh`, imports, `extract-reads` with `FW_primer`/`RV_primer`, `fit-classifier-naive-bayes` → `intermediates/qiime2/classifier.qza` |
 | QIIME2_TAXONOMY (classify) | `qiime2_classify` | qiime2 2026.4 | identical `classify-sklearn --p-n-jobs` + tabulate + export to `results/qiime2/taxonomy/`; a user-supplied `classifier` is copied in-shell (skips training); in classifier mode the DADA2-taxonomy import (`qiime2_intax`) is gated off and the classifier taxonomy takes over the same `intermediates/qiime2/taxonomy.qza` path |
 | PICRUST | `picrust` | picrust2 2.6.3 | identical `picrust2_pipeline.py -t epa-ng --remove_intermediate --in_traits EC,KO` + `add_descriptions.py` ×3 (EC/KO/METACYC); the upstream source-message file (filename == message text) is written as `picrust_message.txt`; resource hint process_high + process_medium_memory = 10 cpus / 50G |
-| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase), `versions.yml` per-module tool version files (the port pins versions in the env files / container tags instead) |
+| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase) |
+| softwareVersionsToYAML + `versions.yml` collection (`pipeline_info/nf_core_ampliseq_software_mqc_versions.yml`, mixed into MultiQC inputs) | engine-native export: `oxo-flow report --versions-yml <file> main.oxoflow` | — | oxo-flow ≥ 0.17.0 exports an nf-core-style `versions.yml` derived statically from the workflow declarations: one entry per rule with the pinned container tag or conda env file + its sha256, plus a `references:` section fed by the workflow's `[[reference_db]]` blocks (SBDI-GTDB R11-RS232-1 here). Deviation: it is a standalone CI-diff artifact, not a per-process runtime capture — upstream records each tool's runtime version at execution time and mixes the collected file into MultiQC, while the export reflects the pinned versions in the definition (resolved runtime package versions depend on the execution environment). Per-rule `versions.yml` emission inside every command is deliberately not replicated (it would change every rule's command while the default plan stays byte-identical). |
 | MERGE_STATS_STD | `merge_stats` | r-base 4.0.3 | identical merge by `sample` |
 | DB download (launcher) | `download_taxonomy_db` | curl | upstream downloads the reference DB in the Nextflow launcher (`file(url)`); the port makes it an explicit system-backend rule |
 | FORMAT_TAXONOMY | `format_taxonomy` | biocontainers 1.2.0 | verbatim `bin/taxref_reformat_sbdi-gtdb.sh`; runs in a scratch dir (the script globs `*`) |
@@ -196,6 +197,11 @@ Other notes:
   channel handling.
 - `metadata_file` is a config key (default `test/fixtures/metadata.tsv`);
   upstream takes it from the samplesheet.
+- The workflow declares an `[[reference_db]]` block for the SBDI-GTDB
+  taxonomy (R11-RS232-1), which the engine's versions.yml export
+  (`oxo-flow report --versions-yml <file> main.oxoflow`) surfaces in its
+  `references:` section; upstream records the equivalent in its
+  `workflow_manifest`/summary report instead.
 - Deviations: the QIIME2 rules pin the container at
   `quay.io/qiime2/amplicon:2026.1` (upstream modules use `2026.4` — the
   version the port was built and live-tested against); `skip_qiime_downstream`

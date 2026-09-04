@@ -119,6 +119,14 @@ skip_phyloseq = true
 skip_tse = true
 skip_report = true
 
+# Reference database declaration (surfaced in the engine-native versions.yml
+# export: `oxo-flow report --versions-yml`). The SBDI-GTDB taxonomy is the
+# same db the DADA2 taxonomy rules consume via dada_ref_taxonomy above.
+[[reference_db]]
+name = "SBDI-GTDB"
+version = "R11-RS232-1"
+source = "https://ndownloader.figshare.com/files/64711203,https://ndownloader.figshare.com/files/64711218"
+
 [defaults]
 threads = 1
 memory = "1G"
