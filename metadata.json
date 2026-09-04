@@ -73,8 +73,7 @@
   ],
   "excluded": [
     "nanopore: nanopore sequencing branch (params.nanopore) — absent from the 2.18.0 codebase (grep-verified; only docs/usage.md mentions Nanopore re ITSxRust long reads)",
-    "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)",
-    "versions.yml: per-module tool version files — the port pins versions in the env files / container tags instead"
+    "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)"
   ],
   "rule_count": 54,
   "tools": [
@@ -100,7 +99,7 @@
   ],
   "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming (incl. the illumina_pe_its read-through pass), DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking, optional multi-run merge), taxonomy assignment against the SBDI-GTDB reference (or the ITS-cut length-filtered branch), a QIIME2 taxa barplot over sample metadata, optional QIIME2 downstream analyses (phylogenetic tree, alpha/beta diversity, abundance table exports, ANCOM/ANCOM-BC/ANCOM-BC2, classifier training/prediction), optional PICRUSt2 functional predictions, an overall summary table and a MultiQC report. Optional post-analysis branches cover the SBDI Sweden biodiversity submission export (event/dna/emof/asv-table/annotation tables), phyloseq and TreeSummarizedExperiment R objects, and an Rmd-based HTML summary report (results/summary_report/summary_report.html) that aggregates QC plots, DADA2 stats, taxonomy references and the optional branch artifacts into one self-contained document.",
   "installation": {
-    "engine": "oxo-flow >= 0.12.0",
+    "engine": "oxo-flow >= 0.17.0",
     "toolchain": "containers (Docker/Singularity) — pinned images",
     "requirements": [
       "raw paired-end FASTQ reads per sample (raw/<sample>_R1.fastq.gz / _R2.fastq.gz) plus a sample groups file (default test/fixtures/groups.tsv)",
