@@ -1,0 +1,11 @@
+# Upstream PHYLOSEQ module env (bioconductor-phyloseq + r-base 4.4.2, the
+# module's own pins). The inline R only needs phyloseq itself.
+# Channel NAMES only (no mirror URLs): CN users point their conda config
+# at a domestic mirror, international users use the defaults.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - bioconductor-phyloseq=1.50.0
+  - r-base=4.4.2

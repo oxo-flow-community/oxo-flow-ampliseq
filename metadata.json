@@ -1,6 +1,6 @@
 {
   "name": "oxo-flow-ampliseq",
-  "title": "Amplicon sequencing (16S/ITS): DADA2 denoising, taxonomy assignment, QIIME2 diversity/ANCOM, PICRUSt and QC",
+  "title": "Amplicon sequencing (16S/ITS): DADA2 denoising, taxonomy assignment, QIIME2 diversity/ANCOM, PICRUSt, SBDI export, phyloseq/TSE objects and QC",
   "origin": "port",
   "rating": "live-verified",
   "engine": "nextflow",
@@ -12,9 +12,9 @@
     "license": "MIT"
   },
   "created": "2026-08-15",
-  "updated": "2026-08-27",
+  "updated": "2026-09-04",
   "domain": "amplicon",
-  "tags": ["amplicon", "16s", "its", "dada2", "qiime2", "picrust", "nf-core"],
+  "tags": ["amplicon", "16s", "its", "dada2", "qiime2", "picrust", "sbdi", "phyloseq", "nf-core"],
   "scope": [
     "rename_raw_data_files",
     "fastqc",
@@ -64,15 +64,19 @@
     "qiime2_preptax",
     "qiime2_classify",
     "multiqc",
-    "picrust"
+    "picrust",
+    "sbdiexport",
+    "sbdiexportreannotate",
+    "phyloseq",
+    "treesummarizedexperiment",
+    "summary_report"
   ],
   "excluded": [
     "nanopore: nanopore sequencing branch (params.nanopore) — absent from the 2.18.0 codebase (grep-verified; only docs/usage.md mentions Nanopore re ITSxRust long reads)",
     "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)",
-    "versions.yml: per-module tool version files — the port pins versions in the env files / container tags instead",
-    "report generators not ported: SBDI export (params.sbdiexport, default false — off by default upstream); phyloseq/TSE R objects and the Rmd summary report (default-on upstream — params.skip_phyloseq/skip_tse/skip_report all default false)"
+    "versions.yml: per-module tool version files — the port pins versions in the env files / container tags instead"
   ],
-  "rule_count": 49,
+  "rule_count": 54,
   "tools": [
     "fastqc",
     "cutadapt",
@@ -88,9 +92,13 @@
     "biocontainers",
     "qiime2",
     "picrust2",
-    "multiqc"
+    "multiqc",
+    "r-sbdiexport",
+    "r-phyloseq",
+    "r-treesummarizedexperiment",
+    "r-rmarkdown"
   ],
-  "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming (incl. the illumina_pe_its read-through pass), DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking, optional multi-run merge), taxonomy assignment against the SBDI-GTDB reference (or the ITS-cut length-filtered branch), a QIIME2 taxa barplot over sample metadata, optional QIIME2 downstream analyses (phylogenetic tree, alpha/beta diversity, abundance table exports, ANCOM/ANCOM-BC/ANCOM-BC2, classifier training/prediction), optional PICRUSt2 functional predictions, an overall summary table and a MultiQC report.",
+  "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming (incl. the illumina_pe_its read-through pass), DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking, optional multi-run merge), taxonomy assignment against the SBDI-GTDB reference (or the ITS-cut length-filtered branch), a QIIME2 taxa barplot over sample metadata, optional QIIME2 downstream analyses (phylogenetic tree, alpha/beta diversity, abundance table exports, ANCOM/ANCOM-BC/ANCOM-BC2, classifier training/prediction), optional PICRUSt2 functional predictions, an overall summary table and a MultiQC report. Optional post-analysis branches cover the SBDI Sweden biodiversity submission export (event/dna/emof/asv-table/annotation tables), phyloseq and TreeSummarizedExperiment R objects, and an Rmd-based HTML summary report (results/summary_report/summary_report.html) that aggregates QC plots, DADA2 stats, taxonomy references and the optional branch artifacts into one self-contained document.",
   "installation": {
     "engine": "oxo-flow >= 0.12.0",
     "toolchain": "containers (Docker/Singularity) — pinned images",
