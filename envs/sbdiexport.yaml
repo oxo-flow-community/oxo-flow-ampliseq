@@ -1,0 +1,13 @@
+# Upstream SBDIEXPORT/SBDIEXPORTREANNOTATE env: r-tidyverse 1.2.1 (the
+# SBDIEXPORT module pin). r-lubridate is added on top: tidyverse 1.2.1 does
+# not bundle it (bundling starts with 2.x) but sbdiexportreannotate.R calls
+# lubridate::today() — upstream's own container happens to carry it.
+# Channel NAMES only (no mirror URLs): CN users point their conda config
+# at a domestic mirror, international users use the defaults.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - r-tidyverse=1.2.1
+  - r-lubridate

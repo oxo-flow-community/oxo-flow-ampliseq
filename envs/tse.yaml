@@ -1,0 +1,16 @@
+# Upstream TREESUMMARIZEDEXPERIMENT module env (bioconductor-treesummarized
+# experiment=2.10.0 + r-base 4.3.2, the module's own pins). The inline R also
+# uses DNAStringSet (bioconductor-biostrings) and ape::read.tree (r-ape),
+# both pulled in transitively by the module's container but listed explicitly
+# here so the conda env is self-sufficient.
+# Channel NAMES only (no mirror URLs): CN users point their conda config
+# at a domestic mirror, international users use the defaults.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - bioconductor-treesummarizedexperiment=2.10.0
+  - r-base=4.3.2
+  - bioconductor-biostrings
+  - r-ape

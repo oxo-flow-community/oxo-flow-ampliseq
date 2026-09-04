@@ -108,6 +108,16 @@ qiime_ref_taxonomy_urls = "https://data.qiime2.org/2023.7/common/silva-138-99-se
 classifier = ""
 # --- picrust (upstream params.picrust, default false) ---
 picrust = false
+# --- sbdiexport (upstream params.sbdiexport, default false) ---
+sbdiexport = false
+# --- robjects + summary report (upstream params.skip_phyloseq /
+#     skip_tse / skip_report default to FALSE, i.e. the report and the
+#     R objects are produced on every upstream run; the port turns them
+#     OFF by default like the other optional branches — flip these to
+#     false to enable) ---
+skip_phyloseq = true
+skip_tse = true
+skip_report = true
 
 [defaults]
 threads = 1
@@ -1890,3 +1900,231 @@ singularity = "docker://quay.io/biocontainers/picrust2:2.6.3--pyhdfd78af_0"
 threads = 10
 memory = "50G"
 time_limit = "24h"
+[[rules]]
+name = "sbdiexport"
+description = "SBDI submission tables (event/dna/emof/asv-table) from the DADA2 ASV and taxonomy tables"
+when = "config.sbdiexport && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = [
+    "results/dada2/ASV_table.tsv",
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/SBDI/event.tsv",
+    "results/SBDI/dna.tsv",
+    "results/SBDI/emof.tsv",
+    "results/SBDI/asv-table.tsv",
+]
+shell = '''
+mkdir -p work/sbdiexport results/SBDI
+cp {input[0]} work/sbdiexport/ASV_table.tsv
+cp {input[1]} work/sbdiexport/ASV_tax_species.tsv
+cp {input[2]} work/sbdiexport/metadata.tsv
+cd work/sbdiexport
+Rscript ../../scripts/sbdiexport.R paired "{config.FW_primer}" "{config.RV_primer}" ASV_table.tsv ASV_tax_species.tsv metadata.tsv
+cp event.tsv dna.tsv emof.tsv asv-table.tsv "$OLDPWD/results/SBDI/"
+'''
+tags = ["export"]
+
+[rules.environment]
+conda = "envs/sbdiexport.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "sbdiexportreannotate"
+description = "SBDI annotation.tsv re-annotating the exported ASV taxonomy"
+when = "config.sbdiexport && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = [
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+]
+output = [
+    "results/SBDI/annotation.tsv",
+]
+shell = '''
+mkdir -p work/sbdiexportreannotate results/SBDI
+cp {input[0]} work/sbdiexportreannotate/ASV_tax_species.tsv
+cd work/sbdiexportreannotate
+Rscript ../../scripts/sbdiexportreannotate.R "{config.dada_ref_taxonomy_dbversion}" ASV_tax_species.tsv dada2 "v2.18.0" "{config.cut_its}"
+cp annotation.tsv "$OLDPWD/results/SBDI/annotation.tsv"
+'''
+tags = ["export"]
+
+[rules.environment]
+conda = "envs/sbdiexport.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "phyloseq"
+description = "Phyloseq R object (RDS) from the DADA2 ASV and taxonomy tables"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_phyloseq"
+input = [
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/phyloseq/dada2_phyloseq.rds",
+]
+shell = '''
+mkdir -p work/phyloseq results/phyloseq
+cp {input[0]} work/phyloseq/ASV_tax_species.tsv
+cp {input[1]} work/phyloseq/ASV_table.tsv
+cp {input[2]} work/phyloseq/metadata.tsv
+cd work/phyloseq
+Rscript ../../scripts/phyloseq.R dada2 ASV_tax_species.tsv ASV_table.tsv metadata.tsv none.tree
+cp dada2_phyloseq.rds "$OLDPWD/results/phyloseq/dada2_phyloseq.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/phyloseq.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "treesummarizedexperiment"
+description = "TreeSummarizedExperiment R object (RDS) from the DADA2 ASV and taxonomy tables"
+when = "!config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_tse"
+input = [
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds",
+]
+shell = '''
+mkdir -p work/treesummarizedexperiment results/treesummarizedexperiment
+cp {input[0]} work/treesummarizedexperiment/ASV_tax_species.tsv
+cp {input[1]} work/treesummarizedexperiment/ASV_table.tsv
+cp {input[2]} work/treesummarizedexperiment/metadata.tsv
+cd work/treesummarizedexperiment
+Rscript ../../scripts/treesummarizedexperiment.R dada2 ASV_tax_species.tsv ASV_table.tsv metadata.tsv none.tree
+cp dada2_TreeSummarizedExperiment.rds "$OLDPWD/results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/tse.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "summary_report"
+description = "Rmd summary report over QC, DADA2, taxonomy, SBDI and R-object results"
+when = "!config.skip_report && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+input = [
+    "assets/report_template.Rmd",
+    "assets/nf-core_style.css",
+    "assets/nf-core-ampliseq_logo_light_long.png",
+    "results/dada2/ASV_table.tsv",
+    "results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv",
+    "results/dada2/DADA2_stats.tsv",
+    "results/dada2/DADA2_table.tsv",
+    "results/dada2/QC/svg/FW_qual_stats.svg",
+    "results/dada2/QC/svg/RV_qual_stats.svg",
+    "results/dada2/QC/svg/FW_preprocessed_qual_stats.svg",
+    "results/dada2/QC/svg/RV_preprocessed_qual_stats.svg",
+    "results/dada2/QC/svg/{config.run_id}_1.err.svg",
+    "results/dada2/QC/svg/{config.run_id}_2.err.svg",
+    "results/cutadapt/cutadapt_summary.tsv",
+    "{config.metadata_file}",
+]
+expand_inputs = [
+    { pattern = "results/dada2/args/{sample}.filterAndTrim.args.txt", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "results/summary_report/summary_report.html",
+]
+shell = '''
+mkdir -p work/summary_report results/summary_report
+cp {input[0]} work/summary_report/template.Rmd
+cp {input[1]} work/summary_report/nf-core_style.css
+cp {input[2]} work/summary_report/nf-core-ampliseq_logo_light_long.png
+cp {input[3]} work/summary_report/ASV_table.tsv
+cp {input[4]} work/summary_report/ASV_tax_species.tsv
+cp {input[5]} work/summary_report/DADA2_stats.tsv
+cp {input[6]} work/summary_report/DADA2_table.tsv
+cp {input[7]} work/summary_report/FW_qual_stats.svg
+cp {input[8]} work/summary_report/RV_qual_stats.svg
+cp {input[9]} work/summary_report/FW_preprocessed_qual_stats.svg
+cp {input[10]} work/summary_report/RV_preprocessed_qual_stats.svg
+cp {input[11]} work/summary_report/{config.run_id}_1.err.svg
+cp {input[12]} work/summary_report/{config.run_id}_2.err.svg
+cp {input[13]} work/summary_report/cutadapt_summary.tsv
+cp {input[14]} work/summary_report/metadata.tsv
+cp {input[15]} work/summary_report/filterAndTrim.args.txt
+cd work/summary_report
+TRUNCLENF=$(cat ../../intermediates/dada2/trunclenf.txt 2>/dev/null || echo 'null')
+TRUNCLENR=$(cat ../../intermediates/dada2/trunclenr.txt 2>/dev/null || echo 'null')
+params=()
+params+=("css='nf-core_style.css'")
+params+=("report_logo='nf-core-ampliseq_logo_light_long.png'")
+params+=("workflow_manifest_version='2.18.0'")
+params+=("metadata='metadata.tsv'")
+params+=("cutadapt_summary='cutadapt_summary.tsv'")
+params+=("truncq={config.truncq}")
+if [ "$TRUNCLENF" != "null" ]; then
+    params+=("trunc_qmin={config.trunc_qmin},trunc_rmin={config.trunc_rmin}")
+    params+=("trunclenf='$TRUNCLENF'")
+    params+=("trunclenr='$TRUNCLENR'")
+fi
+params+=("max_ee={config.max_ee}")
+params+=("dada_qc_f_path='FW_qual_stats.svg',dada_qc_r_path='RV_qual_stats.svg',dada_pp_qc_f_path='FW_preprocessed_qual_stats.svg',dada_pp_qc_r_path='RV_preprocessed_qual_stats.svg'")
+params+=("dada_filtntrim_args='filterAndTrim.args.txt'")
+params+=("dada_sample_inference='{config.sample_inference}'")
+params+=("dada_err_path='{config.run_id}_1.err.svg,{config.run_id}_2.err.svg',dada_err_run='{config.run_id}'")
+params+=("asv_table_path='ASV_table.tsv'")
+params+=("path_dada2_tab='DADA2_table.tsv'")
+params+=("dada_stats_path='DADA2_stats.tsv'")
+params+=("mergepairs_strategy='{config.mergepairs_strategy}'")
+params+=("min_len_asv=0,max_len_asv=0")
+params+=("dada_min_boot={config.dada_min_boot}")
+if [ "{config.cut_its}" != "none" ] && [ -f ../../results/itsx/ASV_ITS_seqs.summary.txt ]; then
+    cp ../../results/itsx/ASV_ITS_seqs.summary.txt itsx_cutasv_summary.txt
+    params+=("itsx_cutasv_summary='itsx_cutasv_summary.txt',cut_its='{config.cut_its}'")
+fi
+params+=("dada2_taxonomy='ASV_tax_species.tsv'")
+params+=("dada2_ref_tax_title='{config.dada_ref_taxonomy_title}',dada2_ref_tax_file='{config.dada_ref_taxonomy_urls}',dada2_ref_tax_citation='{config.dada_ref_taxonomy_citation}'")
+if [ -f ../../results/SBDI/annotation.tsv ]; then
+    cp ../../results/SBDI/event.tsv ../../results/SBDI/dna.tsv ../../results/SBDI/emof.tsv ../../results/SBDI/asv-table.tsv ../../results/SBDI/annotation.tsv .
+    mkdir -p sbdi
+    mv event.tsv dna.tsv emof.tsv asv-table.tsv annotation.tsv sbdi/
+    params+=("sbdi='sbdi/event.tsv,sbdi/dna.tsv,sbdi/emof.tsv,sbdi/asv-table.tsv,sbdi/annotation.tsv'")
+fi
+if [ -f ../../results/phyloseq/dada2_phyloseq.rds ]; then
+    mkdir -p phyloseq
+    cp ../../results/phyloseq/dada2_phyloseq.rds phyloseq/
+    params+=("phyloseq='phyloseq/dada2_phyloseq.rds'")
+fi
+if [ -f ../../results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds ]; then
+    mkdir -p tse
+    cp ../../results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds tse/
+    params+=("tse='tse/dada2_TreeSummarizedExperiment.rds'")
+fi
+params_string=$(IFS=,; echo "${params[*]}")
+Rscript - <<REOF
+library(rmarkdown)
+file.copy("./template.Rmd", "./template_copy.Rmd", overwrite = TRUE)
+rmarkdown::render("template_copy.Rmd", output_file = "summary_report.html", params = list(${params_string}), envir = new.env())
+REOF
+cp summary_report.html "$OLDPWD/results/summary_report/summary_report.html"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/report.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"

@@ -1,4 +1,4 @@
-# oxo-flow-ampliseq — Amplicon sequencing (16S/ITS): DADA2 denoising, taxonomy assignment, QIIME2 diversity/ANCOM, PICRUSt and QC
+# oxo-flow-ampliseq — Amplicon sequencing (16S/ITS): DADA2 denoising, taxonomy assignment, QIIME2 diversity/ANCOM, PICRUSt, SBDI export, phyloseq/TSE objects and QC
 
 [![CI](https://github.com/oxo-flow-community/oxo-flow-ampliseq/actions/workflows/ci.yml/badge.svg)](https://github.com/oxo-flow-community/oxo-flow-ampliseq/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -12,6 +12,9 @@ filterAndTrim, error model learning, denoising, paired-end merging, chimera
 removal and read tracking), taxonomy assignment against the curated SBDI-GTDB
 reference (assignTaxonomy + addSpecies), a QIIME2 taxa barplot over your sample
 metadata, an overall per-sample read-tracking summary, and a MultiQC report.
+Optional branches (off by default) add the SBDI Sweden biodiversity submission
+export, phyloseq / TreeSummarizedExperiment R objects, and an Rmd-based HTML
+summary report that aggregates everything into one document.
 
 ## Installation
 
@@ -108,6 +111,21 @@ upstream's `params` defaults):
   branch, `repeats="error"`, `orderBy="abundance"`).
 - **PICRUSt2** — `picrust = true` runs functional predictions from the
   DADA2 ASV table (see fidelity table for the source-branch deviation).
+- **SBDI export** — `sbdiexport = true` writes the SBDI Sweden biodiversity
+  submission tables (`results/SBDI/`: event, dna, emof, asv-table, plus a
+  re-annotated taxonomy annotation table) from the DADA2 ASV and taxonomy
+  tables. Upstream also defaults this to off.
+- **phyloseq / TreeSummarizedExperiment objects** —
+  `skip_phyloseq` / `skip_tse` (default `true` in the port; upstream builds
+  them by default) write `results/phyloseq/dada2_phyloseq.rds` and
+  `results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds`
+  from the ASV, taxonomy and metadata tables. Set them to `false` to enable.
+- **Summary report** — `skip_report` (default `true` in the port; upstream
+  renders it by default) renders `results/summary_report/summary_report.html`
+  from `assets/report_template.Rmd`: QC plots, DADA2 filter/error stats,
+  taxonomy reference info, the SBDI/phyloseq/TSE artifacts (when present) and
+  the ITS-cut summary are passed as rmarkdown parameters. Set it to `false`
+  to enable.
 
 ## Source
 
@@ -149,7 +167,7 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | QIIME2_PREPTAX (incl. EXTRACT + TRAIN) | `qiime2_preptax` | qiime2 2026.4 | identical: downloads the `qiime_ref_taxonomy_urls` qza pair, `bin/taxref_reformat_qiime_silva138.sh`, imports, `extract-reads` with `FW_primer`/`RV_primer`, `fit-classifier-naive-bayes` → `intermediates/qiime2/classifier.qza` |
 | QIIME2_TAXONOMY (classify) | `qiime2_classify` | qiime2 2026.4 | identical `classify-sklearn --p-n-jobs` + tabulate + export to `results/qiime2/taxonomy/`; a user-supplied `classifier` is copied in-shell (skips training); in classifier mode the DADA2-taxonomy import (`qiime2_intax`) is gated off and the classifier taxonomy takes over the same `intermediates/qiime2/taxonomy.qza` path |
 | PICRUST | `picrust` | picrust2 2.6.3 | identical `picrust2_pipeline.py -t epa-ng --remove_intermediate --in_traits EC,KO` + `add_descriptions.py` ×3 (EC/KO/METACYC); the upstream source-message file (filename == message text) is written as `picrust_message.txt`; resource hint process_high + process_medium_memory = 10 cpus / 50G |
-| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase), `versions.yml` per-module tool version files (the port pins versions in the env files / container tags instead), report generators not ported — SBDI export (`params.sbdiexport` default false, off by default upstream), default-on phyloseq/TSE R objects and the Rmd summary report (`params.skip_phyloseq`/`skip_tse`/`skip_report` all default false) |
+| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase), `versions.yml` per-module tool version files (the port pins versions in the env files / container tags instead) |
 | MERGE_STATS_STD | `merge_stats` | r-base 4.0.3 | identical merge by `sample` |
 | DB download (launcher) | `download_taxonomy_db` | curl | upstream downloads the reference DB in the Nextflow launcher (`file(url)`); the port makes it an explicit system-backend rule |
 | FORMAT_TAXONOMY | `format_taxonomy` | biocontainers 1.2.0 | verbatim `bin/taxref_reformat_sbdi-gtdb.sh`; runs in a scratch dir (the script globs `*`) |
@@ -159,6 +177,11 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | QIIME2_INTAX | `qiime2_intax` | qiime2 2026.4 | verbatim `bin/parse_dada2_taxonomy.r` (porting change: output path is argv[2]) + `HeaderlessTSVTaxonomyFormat` import |
 | QIIME2_BARPLOT | `qiime2_barplot` | qiime2 2026.4 | identical `taxa barplot` + `tools export` |
 | MULTIQC | `multiqc` | multiqc 1.34 | identical command in a scratch dir (`multiqc` scans cwd `.`); verbatim `assets/multiqc_config.yml` |
+| SBDIEXPORT | `sbdiexport` | r-base + SBDI export scripts (sbdiexport 1.2.1) | identical `sbdiexport()` call (paired mode, `FW_primer`/`RV_primer`, dada2 taxmethod); writes `results/SBDI/{event,dna,emof,asv-table}.tsv` |
+| SBDIEXPORTREANNOTATE | `sbdiexportreannotate` | r-base + SBDI export scripts | identical re-annotation table (`annotation.tsv`); the barrnap-prediction arg is omitted (no barrnap branch in the port — the R script treats it as `NA`, same as upstream when no predictions exist) |
+| PHYLOSEQ | `phyloseq` | phyloseq 1.52.1 | identical inline R (`make_phyloseq` path); prefix literal `dada2`, tree arg = nonexistent `none.tree` (no phylogeny branch in the port — `file.exists` guard skips it, as upstream when no tree is staged) |
+| TREESUMMARIZEDEXPERIMENT | `treesummarizedexperiment` | TreeSummarizedExperiment 2.10.1 | identical inline R; referenceSeq slot filled from the taxonomy `sequence` column; same `none.tree` convention |
+| SUMMARY_REPORT | `summary_report` | r-base 4.2 + rmarkdown | identical `rmarkdown::render` of `assets/report_template.Rmd` with the upstream params-list contract (params_list_named, all string values single-quoted); SBDI/phyloseq/TSE/ITS sections are `[ -f ]`-conditional in-shell (their artifacts are not declared inputs — see deviations); `mqc_plot`/picrust sections omitted (see deviations) |
 
 Other notes:
 
@@ -185,7 +208,21 @@ Other notes:
   abundance tables + a taxonomy are available — the port documents the
   DADA2 basis in `results/picrust/picrust_message.txt`); the rarefaction
   WARNING txt files (upstream `error_ignore` emits) are not declared as
-  rule outputs.
+  rule outputs; the phyloseq/TSE/summary-report gates default to `true`
+  (i.e. off) while upstream runs them by default — flip
+  `skip_phyloseq`/`skip_tse`/`skip_report` to `false` to match upstream;
+  the summary report's optional sections (SBDI, phyloseq, TSE, ITS-cut) are
+  `[ -f ]`-conditional in-shell rather than declared inputs, so a cold run
+  with those gates enabled may race the report (re-run once the upstream
+  rules finish — the engine's staleness check re-triggers the report);
+  the summary report omits the upstream `mqc_plot` and picrust sections
+  (`mqc_plot` has no ported counterpart wiring; the upstream picrust
+  report section references a params list that is dead in 2.18.0);
+  the report's `workflow_manifest_version` is the constant `'2.18.0'`
+  and its taxonomy title is "Release R11-RS232-1" (upstream hardcodes the
+  typo "R10"); no barrnap branch exists in the port, so
+  `sbdiexportreannotate` omits the prediction-file arg (R treats it as
+  `NA`, the same path upstream takes when no predictions exist).
 
 ## Test
 
