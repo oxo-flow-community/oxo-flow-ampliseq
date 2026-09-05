@@ -14,7 +14,17 @@
   "created": "2026-08-15",
   "updated": "2026-09-04",
   "domain": "amplicon",
-  "tags": ["amplicon", "16s", "its", "dada2", "qiime2", "picrust", "sbdi", "phyloseq", "nf-core"],
+  "tags": [
+    "amplicon",
+    "16s",
+    "its",
+    "dada2",
+    "qiime2",
+    "picrust",
+    "sbdi",
+    "phyloseq",
+    "nf-core"
+  ],
   "scope": [
     "rename_raw_data_files",
     "fastqc",
@@ -71,7 +81,8 @@
     "treesummarizedexperiment",
     "summary_report"
   ],
-  "excluded": [
+  "excluded": [],
+  "not_applicable": [
     "nanopore: nanopore sequencing branch (params.nanopore) — absent from the 2.18.0 codebase (grep-verified; only docs/usage.md mentions Nanopore re ITSxRust long reads)",
     "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)"
   ],
