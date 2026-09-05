@@ -10,8 +10,10 @@ DADA2 analysis: FastQC quality control, cutadapt primer trimming with a trimming
 summary, DADA2 denoising (quality profiles, automatic truncation lengths,
 filterAndTrim, error model learning, denoising, paired-end merging, chimera
 removal and read tracking), taxonomy assignment against the curated SBDI-GTDB
-reference (assignTaxonomy + addSpecies), a QIIME2 taxa barplot over your sample
-metadata, an overall per-sample read-tracking summary, and a MultiQC report.
+reference (assignTaxonomy + addSpecies), an overall per-sample read-tracking
+summary, and a MultiQC report. A QIIME2 taxa barplot over your sample metadata
+is also ported but gated behind `run_qiime2 = true` (default `false` — the
+QIIME2 container is ~20GB unpacked).
 Optional branches (off by default) add the SBDI Sweden biodiversity submission
 export, phyloseq / TreeSummarizedExperiment R objects, and an Rmd-based HTML
 summary report that aggregates everything into one document.
@@ -44,7 +46,9 @@ cd oxo-flow-ampliseq
 ### 3. Requirements
 
 - **Input data** — raw paired-end FASTQ reads per sample
-  (`raw/<sample>_R1.fastq.gz` / `<sample>_R2.fastq.gz`), a sample groups file
+  (`<raw_dir>/<sample>_R1.fastq.gz` / `<sample>_R2.fastq.gz`; config key
+  `raw_dir`, default `test/fixtures/raw` — point it at your real data
+  directory), a sample groups file
   listing the sample IDs (default `test/fixtures/groups.tsv`), and a sample
   metadata TSV used by the QIIME2 taxa barplot (config key `metadata_file`,
   default `test/fixtures/metadata.tsv`). The SBDI-GTDB taxonomy reference
@@ -61,7 +65,8 @@ cd oxo-flow-ampliseq
 
 ```bash
 # 1. install oxo-flow (see Installation)
-# 2. prepare data: raw/<sample>_R1.fastq.gz / _R2.fastq.gz (see test/fixtures/raw/)
+# 2. prepare data: <raw_dir>/<sample>_R1.fastq.gz / _R2.fastq.gz
+#    and set raw_dir in main.oxoflow [config] (default test/fixtures/raw/)
 # 3. preview the plan
 oxo-flow dry-run main.oxoflow
 # 4. run
@@ -75,7 +80,10 @@ sequences `FW_primer` / `RV_primer` default to empty strings (no adapter
 trimming); cutadapt behavior is controlled by `cutadapt_min_overlap` and
 `cutadapt_max_error_rate`. DADA2 filtering/denoising knobs (`trunc_qmin`,
 `min_len`, `max_ee`, `sample_inference`, `mergepairs_strategy`, …) mirror the
-upstream parameters, and `run_id` names the run-level outputs. `metadata_file`
+upstream parameters, and `run_id` names the run-level outputs. `raw_dir`
+is the directory the reads are read from (`<raw_dir>/<sample>_R1/_R2.fastq.gz`;
+default `test/fixtures/raw` — point it at your real data directory, e.g.
+`raw_dir = "raw"`). `metadata_file`
 points at the sample metadata TSV for the barplot (default
 `test/fixtures/metadata.tsv`). All `skip_*` flags map 1:1 to the upstream
 `params.skip_*` — all default to `false`, i.e. the full default path runs;
@@ -171,7 +179,7 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | softwareVersionsToYAML + `versions.yml` collection (`pipeline_info/nf_core_ampliseq_software_mqc_versions.yml`, mixed into MultiQC inputs) | engine-native export: `oxo-flow report --versions-yml <file> main.oxoflow` | — | oxo-flow ≥ 0.17.0 exports an nf-core-style `versions.yml` derived statically from the workflow declarations: one entry per rule with the pinned container tag or conda env file + its sha256, plus a `references:` section fed by the workflow's `[[reference_db]]` blocks (SBDI-GTDB R11-RS232-1 here). Deviation: it is a standalone CI-diff artifact, not a per-process runtime capture — upstream records each tool's runtime version at execution time and mixes the collected file into MultiQC, while the export reflects the pinned versions in the definition (resolved runtime package versions depend on the execution environment). Per-rule `versions.yml` emission inside every command is deliberately not replicated (it would change every rule's command while the default plan stays byte-identical). |
 | MERGE_STATS_STD | `merge_stats` | r-base 4.0.3 | identical merge by `sample` |
 | DB download (launcher) | `download_taxonomy_db` | curl | upstream downloads the reference DB in the Nextflow launcher (`file(url)`); the port makes it an explicit system-backend rule |
-| FORMAT_TAXONOMY | `format_taxonomy` | biocontainers 1.2.0 | verbatim `bin/taxref_reformat_sbdi-gtdb.sh`; runs in a scratch dir (the script globs `*`) |
+| FORMAT_TAXONOMY | `format_taxonomy` | nf-core/ubuntu 20.04 | verbatim `bin/taxref_reformat_sbdi-gtdb.sh`; runs in a scratch dir (the script globs `*`). Upstream declares the `biocontainers:v1.2.0_cv1` container but the port runs the script in `quay.io/nf-core/ubuntu:20.04` |
 | DADA2_TAXONOMY + DADA2_ADDSPECIES + collectFile | `dada2_taxonomy` | dada2 1.26.0 | **merged**: upstream splits `ASV_seqs.fasta` into 10000-sequence chunks (`splitFasta by: 10000`) and runs assignTaxonomy + addSpecies per chunk, then concatenates chunk tables with header + sorted rows (`collectFile keepHeader, skip 1, sort`). The port replicates chunking with `awk` + per-chunk `Rscript` calls + `head`/`tail -n +2 | sort` concatenation — same chunk files, same args, same outputs. addSpecies resource hint (1 cpu/50G) becomes rule-level 10 cpus/20G, 24h limit |
 | QIIME2_INASV | `qiime2_inasv` | qiime2 2026.4 | identical: biom convert + `tools import` `BIOMV210Format` |
 | QIIME2_INSEQ | `qiime2_inseq` | qiime2 2026.4 | identical `FeatureData[Sequence]` import |
