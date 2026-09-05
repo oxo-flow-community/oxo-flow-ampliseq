@@ -56,6 +56,10 @@ dada_ref_taxonomy_dbversion = "SBDI-GTDB-R11-RS232-1 (https://figshare.scilifela
 # --- run / metadata ---
 run_id = "1"
 metadata_file = "test/fixtures/metadata.tsv"
+# raw input dir: point at your real data directory (e.g. "raw") after
+# cloning; the default ships the test fixtures so a fresh checkout
+# dry-runs cleanly. Files are read as <raw_dir>/<sample>_R1/_R2.fastq.gz.
+raw_dir = "test/fixtures/raw"
 # --- skip flags (upstream params.skip_*, all default false -> full default path) ---
 skip_fastqc = false
 skip_multiqc = false
@@ -138,7 +142,7 @@ memory = "1G"
 [[rules]]
 name = "rename_raw_data_files"
 description = "Rename raw data files to consistent _1/_2.fastq.gz soft-link names"
-input = ["test/fixtures/raw/{sample}_R1.fastq.gz", "test/fixtures/raw/{sample}_R2.fastq.gz"]
+input = ["{config.raw_dir}/{sample}_R1.fastq.gz", "{config.raw_dir}/{sample}_R2.fastq.gz"]
 output = ["intermediates/renamed/{sample}_1.fastq.gz", "intermediates/renamed/{sample}_2.fastq.gz"]
 shell = '''
 [ -f "{output[0]}" ] || ln -s "$PWD/{input[0]}" "{output[0]}"
@@ -807,7 +811,9 @@ threads = 1
 memory = "1G"
 
 # ------------------------------------------------------------------
-# R23  FORMAT_TAXONOMY  (process_single, biocontainers:v1.2.0_cv1)
+# R23  FORMAT_TAXONOMY  (process_single; port pins nf-core/ubuntu:20.04 —
+#      upstream declares biocontainers:v1.2.0_cv1, see README fidelity
+#      table)
 #      Reformat downloaded DB files to assignTaxonomy.fna /
 #      addSpecies.fna + ref_taxonomy info file.
 #      Runs in a scratch dir because the reformat script globs "*".
