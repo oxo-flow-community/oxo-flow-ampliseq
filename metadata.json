@@ -81,7 +81,10 @@
     "treesummarizedexperiment",
     "summary_report"
   ],
-  "excluded": [],
+  "excluded": [
+    "PPLACE phylogenetic placement (clustalo / gappa / epa-ng / hmmer / mafft; upstream `fasta_newick_epang_gappa` + `fasta_hmmsearch_rank_fastas` + seqtk) — not ported; the port has no phylogeny branch (the tree arg is the upstream `none.tree` placeholder)",
+    "Kraken2 / VSEARCH / SIDLE / SINTax alternative classification — upstream `kraken2_taxonomy_wf`, vsearch (cluster + LCA taxonomy), `sidle_wf`, SINTax taxonomy chain — not ported; each needs its own reference-taxonomy download, env and fixtures"
+  ],
   "not_applicable": [
     "nanopore: nanopore sequencing branch (params.nanopore) — absent from the 2.18.0 codebase (grep-verified; only docs/usage.md mentions Nanopore re ITSxRust long reads)",
     "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)"
