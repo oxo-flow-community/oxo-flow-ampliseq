@@ -1,0 +1,10 @@
+name: oxo-flow-ampliseq-pplacetax
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - bioconda::bioconductor-dada2=1.38.0
+  - conda-forge::r-base=4.5.2
+  - conda-forge::r-digest=0.6.39
+  - conda-forge::tbb=2022.3.0

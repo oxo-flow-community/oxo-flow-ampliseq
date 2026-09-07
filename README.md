@@ -10,7 +10,10 @@ DADA2 analysis: FastQC quality control, cutadapt primer trimming with a trimming
 summary, DADA2 denoising (quality profiles, automatic truncation lengths,
 filterAndTrim, error model learning, denoising, paired-end merging, chimera
 removal and read tracking), taxonomy assignment against the curated SBDI-GTDB
-reference (assignTaxonomy + addSpecies), an overall per-sample read-tracking
+reference (assignTaxonomy + addSpecies) — or, alternatively, phylogenetic
+placement (PPLACE: clustalo → epa-ng → gappa), Kraken2, SINTAX or VSEARCH LCA
+taxonomy, each feeding the same QIIME2 taxonomy slot plus per-tool
+phyloseq/TreeSummarizedExperiment objects —, an overall per-sample read-tracking
 summary, and a MultiQC report. A QIIME2 taxa barplot over your sample metadata
 is also ported but gated behind `run_qiime2 = true` (default `false` — the
 QIIME2 container is ~20GB unpacked).
@@ -134,6 +137,44 @@ upstream's `params` defaults):
   taxonomy reference info, the SBDI/phyloseq/TSE artifacts (when present) and
   the ITS-cut summary are passed as rmarkdown parameters. Set it to `false`
   to enable.
+- **Alternative classification chains** — instead of the DADA2/SBDI-GTDB
+  taxonomy (`skip_dada_taxonomy = true`), exactly one of these can take
+  over (priority order mirrors upstream: pplace-pair > DADA2 > SINTAX >
+  Kraken2 > native QIIME2 > VSEARCH LCA):
+  - **PPLACE phylogenetic placement** — set the `pplace_tree` /
+    `pplace_aln` / `pplace_taxonomy` triple (upstream `fasta` + `tree` +
+    `tree_taxonomy`). Reads are aligned to the reference with clustalo,
+    placed with epa-ng (jplace) and re-grafted with gappa; taxonomy comes
+    from `gappa assign` over the placement taxonomy (`pplace_format_tax` /
+    `pplace_reformat_tax` normalize the output). With `run_qiime2 = true`
+    the placed taxonomy lands in the QIIME2 taxonomy slot
+    (`qiime2_intax_pplace`) and the grafted tree replaces the de-novo
+    diversity tree (`qiime2_intree_pplace`); the DADA2 intax /
+    diversity-tree / classify paths are gated off. `skip_phyloseq` /
+    `skip_tse` additionally produce `phyloseq_pplace.rds` /
+    `tse_pplace.rds`.
+  - **Kraken2** — point `kraken2_ref_tax_custom` at a prepared Kraken2
+    database directory (pre-built, as upstream's custom-DB path);
+    `kraken2_db_prep` stages it, `kraken2_classify` + 
+    `kraken2_format_taxresults` produce the taxonomy table that
+    `qiime2_intax_kraken2` imports into the QIIME2 taxonomy slot, and
+    per-tool `phyloseq_kraken2` / `tse_kraken2` objects follow.
+  - **SINTAX** — point `sintax_ref_tax_custom` at a reference FASTA;
+    `sintax_format_db` reformats it (vbmoth format), `sintax_classify`
+    runs vsearch `--sintax` and `sintax_format_tax` normalizes the output
+    for `qiime2_intax_sintax` / `phyloseq_sintax` / `tse_sintax`.
+  - **VSEARCH LCA** — point `vsearch_lca_ref_tax_custom` at a reference
+    FASTA; `vsearch_lca_format_db` builds the reference DB,
+    `vsearch_lca_classify` runs `--usearch_global --lca` and
+    `vsearch_lca_format_tax` normalizes the output for
+    `qiime2_intax_vsearch_lca` / `phyloseq_vsearch_lca` /
+    `tse_vsearch_lca`. This is the only classification branch that can
+    combine with the native QIIME2 classifier path (upstream priority:
+    native wins for the QIIME2 slot; the vsearch objects are still
+    produced).
+  All branches respect `skip_taxonomy` (kills the whole taxonomy layer) and
+  feed the same downstream consumers (barplot, summary report) as the
+  DADA2 taxonomy.
 
 ## Source
 
@@ -173,9 +214,16 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | QIIME2_EXPORT_ABSOLUTE / RELASV / RELTAX | `qiime2_export_absolute`, `qiime2_export_relasv`, `qiime2_export_reltax` | qiime2 2026.4 | identical export + biom convert + collapse/relative-frequency loops over `tax_agglom_min`..`tax_agglom_max` (default 2..6, so the declared outputs cover that range) |
 | QIIME2_ANCOM / ANCOMBC / ANCOMBC2 | `qiime2_ancom`, `qiime2_ancombc`, `qiime2_ancombc2` | qiime2 2026.4 | identical per-category filtering (`--p-where "${cat}<>''"`), ASV + per-level analyses, `<2`-taxa WARNING branch, ANCOMBC `--p-prv-cut 0.1 --p-lib-cut 500 --p-alpha 0.05 --p-conserve` + da-barplot thresholds, ANCOMBC2 `--p-p-adjust-method "holm" --p-prevalence-cutoff 0.1 --p-alpha 0.05` + `bin/ancombc_volcanoplot.r`; `ancombc_formula`/`ancombc2_formula` variants run on the unfiltered table like upstream. Upstream's error-ignore WARNING files become `<...>.WARNING.txt` next to the export dirs |
 | QIIME2_PREPTAX (incl. EXTRACT + TRAIN) | `qiime2_preptax` | qiime2 2026.4 | identical: downloads the `qiime_ref_taxonomy_urls` qza pair, `bin/taxref_reformat_qiime_silva138.sh`, imports, `extract-reads` with `FW_primer`/`RV_primer`, `fit-classifier-naive-bayes` → `intermediates/qiime2/classifier.qza` |
-| QIIME2_TAXONOMY (classify) | `qiime2_classify` | qiime2 2026.4 | identical `classify-sklearn --p-n-jobs` + tabulate + export to `results/qiime2/taxonomy/`; a user-supplied `classifier` is copied in-shell (skips training); in classifier mode the DADA2-taxonomy import (`qiime2_intax`) is gated off and the classifier taxonomy takes over the same `intermediates/qiime2/taxonomy.qza` path |
+| QIIME2_TAXONOMY (classify) | `qiime2_classify` | qiime2 2026.4 | identical `classify-sklearn --p-n-jobs` + tabulate + export to `results/qiime2/taxonomy/`; a user-supplied `classifier` is copied in-shell (skips training); in classifier mode the DADA2-taxonomy import (`qiime2_intax`) is gated off and the classifier taxonomy takes over the same `intermediates/qiime2/taxonomy.qza` path. The gate encodes the upstream dispatch priority: classify is skipped when the pplace-pair, SINTAX or Kraken2 branch is active (they rank above native QIIME2) but not by the VSEARCH LCA branch (ranks below — native wins the shared `taxonomy.qza` slot via the `qiime2_intax_vsearch_lca` gate while the vsearch per-tool objects are still produced) |
 | PICRUST | `picrust` | picrust2 2.6.3 | identical `picrust2_pipeline.py -t epa-ng --remove_intermediate --in_traits EC,KO` + `add_descriptions.py` ×3 (EC/KO/METACYC); the upstream source-message file (filename == message text) is written as `picrust_message.txt`; resource hint process_high + process_medium_memory = 10 cpus / 50G |
-| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase); PPLACE phylogenetic placement (clustalo / gappa / epa-ng / hmmer / mafft via `fasta_newick_epang_gappa` + `fasta_hmmsearch_rank_fastas`/seqtk — no phylogeny branch, `none.tree` placeholder), Kraken2 taxonomy (`kraken2_taxonomy_wf`), VSEARCH cluster + LCA taxonomy, SIDLE long-read species identification, SINTax taxonomy — present upstream, not ported; each needs its own env / reference-taxonomy download / fixtures |
+| FASTA_NEWICK_EPANG_GAPPA as PPLACE_STANDARD (clustalo branch) | `pplace_clustalo_align`, `pplace_epang_split`, `pplace_epang_place`, `pplace_gappa_graft`, `pplace_gappa_heattree` | clustalo (mulled-v2-4cefc385…, upstream-declared Wave image), epa-ng 0.3.8, gappa 0.8.0 | upstream profile-aligns query to the reference alignment with clustalo (`--profile1`), splits with `epa-ng --split fullaln.fa refphylogeny.tree`, places with `epa-ng --ref-msa --tree --query` (jplace gz), grafts with `gappa examine graft` and renders the per-branch heat tree (`examine heat-tree` + the `grep '^ *At'` colours step) — all args identical; upstream's hmmer/mafft alignmethod branches and the `pplace_sheet` variant are not ported (the clustalo/standard path is the upstream default, `pplace_alnmethod = 'clustalo'` in nextflow.config) |
+| FORMAT_PPLACETAX as PPLACEFORMATTAX_STANDARD | `pplace_format_tax`, `pplace_reformat_tax` | dada2 env (R) / pandas 1.1.5 | identical per-ASV max-LWR selection (single max → fewer taxopath entries → iterative suffix reduction) producing `*.per_query_unique.tsv` + `{pplace_name}.taxonomy.tsv` (upstream FORMAT_PPLACETAX, R script extracted verbatim); `pplace_reformat_tax` runs the PHYLOSEQ_INTAX helper `reformat_tax_for_phyloseq.py` (pandas 1.1.5 container matches upstream `phyloseq_intax.nf`) to build the per-tool phyloseq/TSE input |
+| KRAKEN2_TAXONOMY_WF | `kraken2_db_prep`, `kraken2_classify`, `kraken2_format_taxresults` | kraken2 (Wave container `kraken2_coreutils_pigz`, upstream-declared), r-base 4.2.1 | upstream UNTARs a `.tar.gz`/`.tgz` DB or accepts a directory (non-tar/dir inputs error); the port's `kraken2_db_prep` stages a pre-built directory and writes a `db.ready` pointer. Classify args identical (`--use-names --confidence` from `kraken2_confidence`); FORMAT_TAXRESULTS_KRAKEN2 extracted verbatim (R) with the default `taxlevels = "D,P,C,O,F,G,S"`, emitting the `.keys/.complete/.tsv/.into-qiime2.tsv` table set |
+| SINTAX_TAXONOMY_WF | `sintax_format_db`, `sintax_classify`, `sintax_format_tax` | biocontainers:v1.2.0_cv1 (upstream-declared `docker.io` ref), vsearch 2.31.0 | `sintax_format_db` replicates FORMAT_TAXONOMY_SINTAX's gzip magic-byte check (`head -c2 | od -An -t u1` == "31 139" → `cp -fL` else `gzip -c`) and the `ref_taxonomy_*.txt` "dbversion label: user_supplied" bookkeeping; classify args identical (`--gzip_decompress --sintax_cutoff 0.8 --randseed {seed} --tabbedout`, ext.args from `conf/modules.config:582`); the converter script (verbatim `bin/convert_sintax_output.py`) normalizes to the per-ASV table. Upstream's `ASV_tax_ITS_tax…` cut_its name switch does not exist in the port (single output path per rule) |
+| VSEARCH_LCA_TAXONOMY_WF | `vsearch_lca_format_db`, `vsearch_lca_classify`, `vsearch_lca_format_tax` | biocontainers:v1.2.0_cv1 (upstream-declared `docker.io` ref), vsearch 2.31.0 | same FORMAT_TAXONOMY gzip check as the SINTAX rule; classify args identical (`--usearch_global --id {vsearch_lca_id} --gzip_decompress --top_hits_only --output_no_hits --maxaccepts/--maxrejects/--lca_cutoff/--query_cov from config --n_mismatch --notrunclates --lcaout`, ext.args from `conf/modules.config:631`); the converter script (verbatim `bin/convert_vsearch_lca_output.py`) expands the LCA lineages over the default `vsearch_lca_taxlevels` |
+| QIIME2_INTAX (per-chain variants) | `qiime2_intax_pplace`, `qiime2_intax_sintax`, `qiime2_intax_kraken2`, `qiime2_intax_vsearch_lca` | qiime2 2026.1 | identical imports into the shared `intermediates/qiime2/taxonomy.qza` slot (each branch's gate is mutually exclusive per the upstream dispatch priority); pplace/sintax/vsearch use the same `bin/parse_dada2_taxonomy.r` path as `qiime2_intax`; the kraken2 variant replicates the upstream quirk where KRAKEN2_TAXONOMY_WF's qiime2_tsv keeps its header row and QIIME2_INTAX_KRAKEN2 runs an empty script (plain `cp`) — imported as HeaderlessTSV with the header consumed as a data row, exactly as upstream carries it |
+| QIIME2_TREE (PPLACE replacement) | `qiime2_intree_pplace` | qiime2 2026.1 | on the PPLACE branch the grafted `intermediates/pplace/grafted.newick` (GAPPA_GRAFT output) is imported as the rooted tree and replaces the de-novo mafft→mask→fasttree `qiime2_diversity_tree` run, mirroring upstream's `ch_trees_for_qiime` switch |
+| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase), SIDLE long-read species identification (`sidle_wf`), the PPLACE_SHEET variant (`params.pplace_sheet`, hmmer-based) and the hmmer/mafft `pplace_alnmethod` branches — not ported; SIDLE needs its own reference database setup, env and fixtures, the non-clustalo placement branches are non-default upstream |
 | softwareVersionsToYAML + `versions.yml` collection (`pipeline_info/nf_core_ampliseq_software_mqc_versions.yml`, mixed into MultiQC inputs) | engine-native export: `oxo-flow report --versions-yml <file> main.oxoflow` | — | oxo-flow ≥ 0.17.0 exports an nf-core-style `versions.yml` derived statically from the workflow declarations: one entry per rule with the pinned container tag or conda env file + its sha256, plus a `references:` section fed by the workflow's `[[reference_db]]` blocks (SBDI-GTDB R11-RS232-1 here). Deviation: it is a standalone CI-diff artifact, not a per-process runtime capture — upstream records each tool's runtime version at execution time and mixes the collected file into MultiQC, while the export reflects the pinned versions in the definition (resolved runtime package versions depend on the execution environment). Per-rule `versions.yml` emission inside every command is deliberately not replicated (it would change every rule's command while the default plan stays byte-identical). |
 | MERGE_STATS_STD | `merge_stats` | r-base 4.2 (envs/dada2.yaml pin; upstream declares the Wave image bioconductor-dada2_r-base_r-digest_tbb, no visible pin) | identical merge by `sample` |
 | DB download (launcher) | `download_taxonomy_db` | curl | upstream downloads the reference DB in the Nextflow launcher (`file(url)`); the port makes it an explicit system-backend rule |
@@ -188,9 +236,9 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | MULTIQC | `multiqc` | multiqc 1.34 | identical command in a scratch dir (`multiqc` scans cwd `.`); verbatim `assets/multiqc_config.yml` |
 | SBDIEXPORT | `sbdiexport` | r-base + SBDI export scripts (sbdiexport 1.2.1) | identical `sbdiexport()` call (paired mode, `FW_primer`/`RV_primer`, dada2 taxmethod); writes `results/SBDI/{event,dna,emof,asv-table}.tsv` |
 | SBDIEXPORTREANNOTATE | `sbdiexportreannotate` | r-base + SBDI export scripts | identical re-annotation table (`annotation.tsv`); the barrnap-prediction arg is omitted (no barrnap branch in the port — the R script treats it as `NA`, same as upstream when no predictions exist) |
-| PHYLOSEQ | `phyloseq` | phyloseq 1.50.0 (upstream biocontainers/bioconductor-phyloseq:1.50.0--r44hdfd78af_0, env pin 1.50.0) | identical inline R (`make_phyloseq` path); prefix literal `dada2`, tree arg = nonexistent `none.tree` (no phylogeny branch in the port — `file.exists` guard skips it, as upstream when no tree is staged) |
-| TREESUMMARIZEDEXPERIMENT | `treesummarizedexperiment` | TreeSummarizedExperiment 2.10.0 (upstream biocontainers/bioconductor-treesummarizedexperiment:2.10.0--r43hdfd78af_0, env pin 2.10.0) | identical inline R; referenceSeq slot filled from the taxonomy `sequence` column; same `none.tree` convention |
-| SUMMARY_REPORT | `summary_report` | r-base 4.2 + rmarkdown | identical `rmarkdown::render` of `assets/report_template.Rmd` with the upstream params-list contract (params_list_named, all string values single-quoted); SBDI/phyloseq/TSE/ITS sections are `[ -f ]`-conditional in-shell (their artifacts are not declared inputs — see deviations); `mqc_plot`/picrust sections omitted (see deviations) |
+| PHYLOSEQ | `phyloseq` | phyloseq 1.50.0 (upstream biocontainers/bioconductor-phyloseq:1.50.0--r44hdfd78af_0, env pin 1.50.0) | identical inline R (`make_phyloseq` path); prefix literal `dada2`, tree arg = nonexistent `none.tree` (no de-novo tree in the default branch — `file.exists` guard skips it, as upstream when no tree is staged). Per-tool variants (`phyloseq_pplace` / `phyloseq_kraken2` / `phyloseq_sintax` / `phyloseq_vsearch_lca`) consume the alternative-chain taxonomy tables through the same inline R (upstream PHYLOSEQ_INTAX pre-formats each chain's table with `reformat_tax_for_phyloseq.py` — the port folds that normalization into `pplace_reformat_tax` / `kraken2_format_taxresults` / the sintax/vsearch converter scripts, so the variants read the already-per-ASV tables) |
+| TREESUMMARIZEDEXPERIMENT | `treesummarizedexperiment` | TreeSummarizedExperiment 2.10.0 (upstream biocontainers/bioconductor-treesummarizedexperiment:2.10.0--r43hdfd78af_0, env pin 2.10.0) | identical inline R; referenceSeq slot filled from the taxonomy `sequence` column; same `none.tree` convention on the default branch. Per-tool variants (`tse_pplace` / `tse_kraken2` / `tse_sintax` / `tse_vsearch_lca`) mirror the phyloseq ones; the alt-chain variants fall back to the PPLACE grafted tree (`intermediates/pplace/grafted.newick`) in-shell when present, else `none.tree` (upstream receives the grafted tree through the channel — the in-shell fallback is the port's static-input equivalent) |
+| SUMMARY_REPORT | `summary_report` | r-base 4.2 + rmarkdown | identical `rmarkdown::render` of `assets/report_template.Rmd` with the upstream params-list contract (params_list_named, all string values single-quoted); SBDI/phyloseq/TSE/ITS sections are `[ -f ]`-conditional in-shell (their artifacts are not declared inputs — see deviations); `mqc_plot`/picrust sections omitted (see deviations); on the alt-classification chains the per-tool phyloseq/TSE RDS paths are passed as the same comma-joined `phyloseq=`/`tse=` params upstream builds from its mixed channel |
 
 Other notes:
 
@@ -237,6 +285,24 @@ Other notes:
   typo "R10"); no barrnap branch exists in the port, so
   `sbdiexportreannotate` omits the prediction-file arg (R treats it as
   `NA`, the same path upstream takes when no predictions exist).
+- Alt-classification chains (PPLACE / Kraken2 / SINTAX / VSEARCH LCA),
+  added 2026-09-07: `pplace_gappa_assign` hardcodes the optional-emits
+  flags upstream enables conditionally (`--per-query-results --krona
+  --sativa`) and `pplace_gappa_heattree` hardcodes the tree-format flags
+  upstream passes via `ext.args` (`--write-nexus-tree
+  --write-phyloxml-tree --write-svg-tree`); only the standard clustalo
+  placement path is implemented (upstream default, see the not-ported
+  row above); the Kraken2 DB is staged from a pre-built directory via a
+  `db.ready` marker instead of upstream's UNTAR channel, and the Kraken2
+  chain runs in the upstream-declared community.wave.seqera.io Wave
+  containers while the SINTAX/VSEARCH format rules keep upstream's
+  `docker.io/biocontainers:v1.2.0_cv1` declaration; the per-tool
+  phyloseq/TSE variants read already-normalized tables (the
+  PHYLOSEQ_INTAX `reformat_tax_for_phyloseq.py` step is folded into the
+  chain's format rule) and the TSE variants fall back to the grafted
+  tree in-shell rather than through a channel; `format_pplacetax.R`
+  runs in a conda env (`envs/pplacetax.yaml`) instead of upstream's
+  Wave container.
 
 ## Test
 
