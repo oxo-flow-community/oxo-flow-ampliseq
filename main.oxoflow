@@ -147,6 +147,25 @@ pplace_name = "user_tree"      # output name prefix (upstream default params.ppl
 pplace_model = ""              # phylogenetic model for EPA-NG (--model), e.g. "GTR+F+I+I+R3"
 pplace_alnmethod = "clustalo"  # upstream params.pplace_alnmethod; the port implements the clustalo branch
 
+# --- SIDLE multi-region taxonomy (upstream sidle_wf; q2-sidle
+#     reconstruction of a multi-region OTU/ASV table, long-read style
+#     species identification). Activation key is sidle_ref_tax_custom;
+#     per-region parameters are parallel comma-lists positionally
+#     aligned with sidle_regions. Upstream passes each region as a
+#     tuple (region, trim_length, fw_primer, rv_primer); here the four
+#     lists are zipped in the shell. NOTE: like upstream multiregion,
+#     ASV post-processing is incompatible with SIDLE — do not combine
+#     with vsearch_cluster / ASV length / codon filters. ---
+sidle_ref_tax_custom = ""      # headerless db taxonomy txt (seq-id \t lineage) — ACTIVATES the sidle chain
+sidle_ref_seq_custom = ""      # unaligned db sequences fasta (matching sidle_ref_tax_custom ids)
+sidle_ref_aln_custom = ""      # optional aligned db fasta — enables fragment/seq reconstruction
+sidle_ref_tree_custom = ""     # optional SEPP reference tree qza (Greengenes 13_8 / SILVA 128) — enables tree reconstruction
+sidle_regions = ""             # comma-separated region names, e.g. "V4,V1V3"
+sidle_trim_lengths = ""        # comma-separated trim lengths, positionally aligned with sidle_regions
+sidle_fw_primers = ""          # comma-separated forward primers, positionally aligned with sidle_regions
+sidle_rv_primers = ""          # comma-separated reverse primers, positionally aligned with sidle_regions
+sidle_min_counts = 0           # prefilter: keep samples with >= this many total counts across regions (upstream task.ext.min_counts, default 0)
+
 # Reference database declaration (surfaced in the engine-native versions.yml
 # export: `oxo-flow report --versions-yml`). The SBDI-GTDB taxonomy is the
 # same db the DADA2 taxonomy rules consume via dada_ref_taxonomy above.
@@ -983,7 +1002,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_inasv"
 description = "Import ASV table into QIIME2 FeatureTable[Frequency]"
-when = "!config.skip_qiime && config.run_qiime2 && config.cut_its == \"none\""
+when = "!config.skip_qiime && config.run_qiime2 && config.cut_its == \"none\" && config.sidle_ref_tax_custom == \"\""
 input = ["results/dada2/DADA2_table.tsv"]
 output = ["intermediates/qiime2/table.qza"]
 shell = '''
@@ -1071,7 +1090,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax"
 description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\" && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\")"
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\" && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.sidle_ref_tax_custom == \"\""
 input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1093,12 +1112,13 @@ memory = "3G"
 # Alternative-classification intax variants: each imports its tool's
 # taxonomy table into the SHARED intermediates/qiime2/taxonomy.qza path.
 # The when-gates encode the upstream taxonomy dispatch priority
-# (ampliseq.nf 936-975): pplace > dada2 > sintax > kraken2 > native
-# qiime2 > vsearch_lca — a rule only excludes the tools ranked ABOVE it.
+# (ampliseq.nf 936-975): SIDLE (multiregion) > pplace > dada2 > sintax
+# > kraken2 > native qiime2 > vsearch_lca — a rule only excludes the
+# tools ranked ABOVE it.
 [[rules]]
 name = "qiime2_intax_pplace"
 description = "Import phylogenetic-placement taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "config.pplace_tree != \"\" && config.pplace_taxonomy != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy"
+when = "config.pplace_tree != \"\" && config.pplace_taxonomy != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && config.sidle_ref_tax_custom == \"\""
 input = ["results/pplace/{config.pplace_name}.taxonomy.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1120,7 +1140,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax_sintax"
 description = "Import SINTAX taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "config.sintax_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy"
+when = "config.sintax_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sidle_ref_tax_custom == \"\""
 input = ["results/sintax/ASV_tax.sintax_format.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1142,7 +1162,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax_kraken2"
 description = "Import Kraken2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "config.kraken2_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\""
+when = "config.kraken2_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.sidle_ref_tax_custom == \"\""
 input = ["results/kraken2/ASV_tax.kraken2.into-qiime2.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1167,7 +1187,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax_vsearch_lca"
 description = "Import VSEARCH LCA taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "config.vsearch_lca_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\""
+when = "config.vsearch_lca_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\" && config.sidle_ref_tax_custom == \"\""
 input = ["results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1189,7 +1209,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_barplot"
 description = "QIIME2 taxa barplot visualization and export"
-when = "!config.skip_qiime && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\") && !config.skip_barplot && config.run_qiime2"
+when = "!config.skip_qiime && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\" || config.sidle_ref_tax_custom != \"\") && !config.skip_barplot && config.run_qiime2"
 input = ["{config.metadata_file}", "intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
 output = [
     "results/qiime2/barplot/index.html",
@@ -1262,7 +1282,7 @@ memory = "1G"
 [[rules]]
 name = "qiime2_diversity_tree"
 description = "Build rooted phylogenetic tree from representative sequences"
-when = "config.run_qiime2 && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices) && config.pplace_tree == \"\""
+when = "config.run_qiime2 && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices) && config.pplace_tree == \"\" && config.sidle_ref_tree_custom == \"\""
 input = ["intermediates/qiime2/rep-seqs.qza"]
 output = [
     "intermediates/qiime2/rooted-tree.qza",
@@ -1951,7 +1971,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_classify"
 description = "Classify ASVs with a trained QIIME2 classifier"
-when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.classifier != \"\") && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\""
+when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.classifier != \"\") && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.sidle_ref_tax_custom == \"\""
 input = ["intermediates/qiime2/rep-seqs.qza", "intermediates/qiime2/classifier.qza"]
 output = [
     "intermediates/qiime2/taxonomy.qza",
@@ -3181,3 +3201,649 @@ singularity = "docker://docker.io/biocontainers/biocontainers:v1.2.0_cv1"
 [rules.resources]
 threads = 1
 memory = "2G"
+
+# ------------------------------------------------------------------
+# R72  SIDLE_DB_PREP  (fail-fast validation + staging; GTDB/geNomad
+#      db-prep convention). Upstream sidle_wf takes the custom
+#      reference DB paths directly as channel inputs; the port stages
+#      them once and validates the parallel comma-lists (regions /
+#      trim lengths / primers must be non-empty, equal-length, and
+#      positionally aligned) before any q2-sidle rule runs.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_db_prep"
+description = "Validate and stage the SIDLE custom reference database"
+when = "config.sidle_ref_tax_custom != \"\""
+input = ["{config.sidle_ref_tax_custom}"]
+output = [
+    "intermediates/sidle/db.ready",
+    "intermediates/sidle/db_taxonomy.txt",
+    "intermediates/sidle/db_sequences.fasta",
+]
+shell = '''
+mkdir -p work/sidle_db_prep intermediates/sidle
+TAX="{config.sidle_ref_tax_custom}"
+SEQ="{config.sidle_ref_seq_custom}"
+REG="{config.sidle_regions}"
+LEN="{config.sidle_trim_lengths}"
+FW="{config.sidle_fw_primers}"
+RV="{config.sidle_rv_primers}"
+if [ ! -f "$TAX" ]; then echo "SIDLE: sidle_ref_tax_custom file not found: $TAX" >&2; exit 1; fi
+if [ -z "$SEQ" ]; then echo "SIDLE: sidle_ref_seq_custom is required when sidle_ref_tax_custom is set" >&2; exit 1; fi
+if [ ! -f "$SEQ" ]; then echo "SIDLE: sidle_ref_seq_custom file not found: $SEQ" >&2; exit 1; fi
+if [ -z "$REG" ]; then echo "SIDLE: sidle_regions is required when sidle_ref_tax_custom is set" >&2; exit 1; fi
+NT=$(awk -F, '{print NF}' <<< "$REG")
+for pair in "sidle_trim_lengths:$LEN" "sidle_fw_primers:$FW" "sidle_rv_primers:$RV"; do
+    key=${pair%%:*}; val=${pair#*:}
+    if [ -z "$val" ]; then echo "SIDLE: $key is required when sidle_ref_tax_custom is set" >&2; exit 1; fi
+    NK=$(awk -F, '{print NF}' <<< "$val")
+    if [ "$NK" -ne "$NT" ]; then echo "SIDLE: $key has $NK entries but sidle_regions has $NT — the lists must be positionally aligned" >&2; exit 1; fi
+done
+for list in "$REG" "$LEN" "$FW" "$RV"; do
+    echo "$list" | awk -F, '{ for (i=1;i<=NF;i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i); if ($i == "") exit 1 } }' || { echo "SIDLE: empty entry in a sidle parameter list" >&2; exit 1; }
+done
+ALN="{config.sidle_ref_aln_custom}"
+if [ -n "$ALN" ] && [ ! -f "$ALN" ]; then echo "SIDLE: sidle_ref_aln_custom file not found: $ALN" >&2; exit 1; fi
+TREE="{config.sidle_ref_tree_custom}"
+if [ -n "$TREE" ] && [ ! -f "$TREE" ]; then echo "SIDLE: sidle_ref_tree_custom file not found: $TREE" >&2; exit 1; fi
+cp "$TAX" work/sidle_db_prep/db_taxonomy.txt
+cp "$SEQ" work/sidle_db_prep/db_sequences.fasta
+echo "$TAX" > work/sidle_db_prep/db.ready
+cp work/sidle_db_prep/db_taxonomy.txt work/sidle_db_prep/db_sequences.fasta work/sidle_db_prep/db.ready "$OLDPWD/intermediates/sidle/"
+'''
+tags = ["sidle", "reference"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 1
+memory = "2G"
+
+# ------------------------------------------------------------------
+# R73  SIDLE_INDB  (subworkflows/local/sidle/indb.nf) — import the
+#      custom reference sequences + headerless taxonomy into QIIME2
+#      artifacts.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_indb"
+description = "Import SIDLE custom reference sequences and taxonomy into QIIME2"
+when = "config.sidle_ref_tax_custom != \"\""
+input = [
+    "intermediates/sidle/db_taxonomy.txt",
+    "intermediates/sidle/db_sequences.fasta",
+]
+output = [
+    "intermediates/sidle/db_sequences.qza",
+    "intermediates/sidle/db_taxonomy.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_indb/xdgconfig"
+export MPLCONFIGDIR="work/sidle_indb/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_indb/numbacache"
+mkdir -p work/sidle_indb intermediates/sidle
+cp {input[0]} {input[1]} work/sidle_indb/
+cd work/sidle_indb
+qiime tools import --input-path db_sequences.fasta --output-path db_sequences.qza --type 'FeatureData[Sequence]'
+qiime tools import --input-path db_taxonomy.txt --output-path db_taxonomy.qza --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat
+cp db_sequences.qza db_taxonomy.qza "$OLDPWD/intermediates/sidle/"
+'''
+tags = ["sidle", "reference"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R74  SIDLE_INDBALIGNED  (subworkflows/local/sidle/indbaligned.nf;
+#      optional aligned reference — enables SIDLE_SEQRECON and the
+#      SEPP tree branch).
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_indbaligned"
+description = "Import SIDLE custom aligned reference sequences into QIIME2"
+when = "config.sidle_ref_tax_custom != \"\" && config.sidle_ref_aln_custom != \"\""
+input = ["intermediates/sidle/db.ready"]
+output = ["intermediates/sidle/db_alignedsequences.qza"]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_indbaligned/xdgconfig"
+export MPLCONFIGDIR="work/sidle_indbaligned/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_indbaligned/numbacache"
+mkdir -p work/sidle_indbaligned intermediates/sidle
+cd work/sidle_indbaligned
+qiime tools import --input-path {config.sidle_ref_aln_custom} --output-path db_alignedsequences.qza --type 'FeatureData[AlignedSequence]'
+cp db_alignedsequences.qza "$OLDPWD/intermediates/sidle/"
+'''
+tags = ["sidle", "reference"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R75  SIDLE_DBFILT  (subworkflows/local/sidle/dbfilt.nf) — cull
+#      short/problematic sequences then taxonomically filter the
+#      reference. The tax-filtered variant is NOT consumed downstream
+#      (upstream DBEXTRACT uses the cull-only output; TAXRECON consumes
+#      the original db_taxonomy.qza) but is emitted to mirror upstream.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_dbfilt"
+description = "Cull and taxonomy-filter the SIDLE reference sequences"
+when = "config.sidle_ref_tax_custom != \"\""
+input = [
+    "intermediates/sidle/db_sequences.qza",
+    "intermediates/sidle/db_taxonomy.qza",
+]
+output = [
+    "intermediates/sidle/db_filtered_sequences.qza",
+    "intermediates/sidle/db_filtered_sequences_tax.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_dbfilt/xdgconfig"
+export MPLCONFIGDIR="work/sidle_dbfilt/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_dbfilt/numbacache"
+mkdir -p work/sidle_dbfilt intermediates/sidle
+cp {input[0]} {input[1]} work/sidle_dbfilt/
+cd work/sidle_dbfilt
+qiime rescript cull-seqs --p-n-jobs {threads} --i-sequences db_sequences.qza --o-clean-sequences db_filtered_sequences.qza
+qiime taxa filter-seqs --i-sequences db_filtered_sequences.qza --i-taxonomy db_taxonomy.qza --o-filtered-sequences db_filtered_sequences_tax.qza
+cp db_filtered_sequences.qza db_filtered_sequences_tax.qza "$OLDPWD/intermediates/sidle/"
+'''
+tags = ["sidle", "reference"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R76  SIDLE_IN  (subworkflows/local/sidle/in.nf) — import the merged
+#      DADA2 ASV table (biom) and representative sequences into QIIME2.
+#      Accepted simplification vs upstream: upstream consumes the
+#      per-region DADA2_SPLITREGIONS outputs (ASV_table_region*.tsv /
+#      ASV_seqs_region*.fasta); the port feeds the merged
+#      results/dada2/ tables to all regions.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_in"
+description = "Import DADA2 ASV table and sequences into QIIME2 for SIDLE"
+when = "config.sidle_ref_tax_custom != \"\""
+input = [
+    "results/dada2/ASV_table.tsv",
+    "results/dada2/ASV_seqs.fasta",
+]
+output = [
+    "intermediates/sidle/asv/table.qza",
+    "intermediates/sidle/asv/rep-seqs.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_in/xdgconfig"
+export MPLCONFIGDIR="work/sidle_in/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_in/numbacache"
+mkdir -p work/sidle_in intermediates/sidle/asv
+cp {input[0]} {input[1]} work/sidle_in/
+cd work/sidle_in
+biom convert -i ASV_table.tsv -o table.biom --table-type="OTU table" --to-hdf5
+qiime tools import --input-path table.biom --output-path table.qza --type 'FeatureTable[Frequency]' --input-format BIOMV210Format
+qiime tools import --input-path ASV_seqs.fasta --output-path rep-seqs.qza --type 'FeatureData[Sequence]'
+cp table.qza rep-seqs.qza "$OLDPWD/intermediates/sidle/asv/"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R77  SIDLE_TRIM  (subworkflows/local/sidle/trim.nf) — trim the ASV
+#      table + sequences to each region's amplicon length. One scatter
+#      instance per region; the trim length is resolved positionally
+#      from the parallel sidle_trim_lengths list.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_trim"
+description = "Trim DADA2 ASVs to each region's amplicon length (q2-sidle trim-dada2-posthoc)"
+when = "config.sidle_ref_tax_custom != \"\""
+scatter = { variable = "region", values_from = "config.sidle_regions" }
+input = [
+    "intermediates/sidle/asv/table.qza",
+    "intermediates/sidle/asv/rep-seqs.qza",
+]
+output = [
+    "intermediates/sidle/trimmed/{region}_table.qza",
+    "intermediates/sidle/trimmed/{region}_rep-seqs.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_trim/xdgconfig"
+export MPLCONFIGDIR="work/sidle_trim/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_trim/numbacache"
+mkdir -p work/sidle_trim intermediates/sidle/trimmed
+cp {input[0]} {input[1]} work/sidle_trim/
+IDX=$(awk -F, -v r="{region}" '{ for (i=1;i<=NF;i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i); if ($i == r) { print i; exit } } }' <<< "{config.sidle_regions}")
+LEN=$(cut -d, -f"$IDX" <<< "{config.sidle_trim_lengths}" | tr -d ' ')
+if [ -z "$LEN" ]; then echo "SIDLE: no trim length found for region {region}" >&2; exit 1; fi
+cd work/sidle_trim
+qiime sidle trim-dada2-posthoc --i-table table.qza --i-representative-sequences rep-seqs.qza --p-trim-length "$LEN" --o-trimmed-table {region}_table.qza --o-trimmed-representative-sequences {region}_rep-seqs.qza
+cp {region}_table.qza {region}_rep-seqs.qza "$OLDPWD/intermediates/sidle/trimmed/"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R78  SIDLE_DBEXTRACT  (subworkflows/local/sidle/dbextract.nf) —
+#      in-silico extract each region's reads from the culled reference
+#      and collapse to kmers. Consumes the cull-only filtered sequences
+#      (upstream SIDLE_DBFILT.seq), NOT the tax-filtered variant.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_dbextract"
+description = "Extract regional reads from the SIDLE reference and prepare kmers"
+when = "config.sidle_ref_tax_custom != \"\""
+scatter = { variable = "region", values_from = "config.sidle_regions" }
+input = ["intermediates/sidle/db_filtered_sequences.qza"]
+output = [
+    "intermediates/sidle/dbextract/{region}_kmers.qza",
+    "intermediates/sidle/dbextract/{region}_kmer-map.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_dbextract/xdgconfig"
+export MPLCONFIGDIR="work/sidle_dbextract/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_dbextract/numbacache"
+mkdir -p work/sidle_dbextract intermediates/sidle/dbextract
+cp {input[0]} work/sidle_dbextract/db_filtered_sequences.qza
+IDX=$(awk -F, -v r="{region}" '{ for (i=1;i<=NF;i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i); if ($i == r) { print i; exit } } }' <<< "{config.sidle_regions}")
+LEN=$(cut -d, -f"$IDX" <<< "{config.sidle_trim_lengths}" | tr -d ' ')
+FW=$(cut -d, -f"$IDX" <<< "{config.sidle_fw_primers}" | tr -d ' ')
+RV=$(cut -d, -f"$IDX" <<< "{config.sidle_rv_primers}" | tr -d ' ')
+if [ -z "$LEN" ] || [ -z "$FW" ] || [ -z "$RV" ]; then echo "SIDLE: missing trim length or primers for region {region}" >&2; exit 1; fi
+cd work/sidle_dbextract
+qiime feature-classifier extract-reads --p-n-jobs {threads} --i-sequences db_filtered_sequences.qza --p-f-primer "$FW" --p-r-primer "$RV" --o-reads db_{region}.qza
+qiime sidle prepare-extracted-region --p-n-workers {threads} --i-sequences db_{region}.qza --p-region "{region}" --p-fwd-primer "$FW" --p-rev-primer "$RV" --p-trim-length "$LEN" --o-collapsed-kmers {region}_kmers.qza --o-kmer-map {region}_kmer-map.qza
+cp {region}_kmers.qza {region}_kmer-map.qza "$OLDPWD/intermediates/sidle/dbextract/"
+'''
+tags = ["sidle", "reference"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 4
+memory = "8G"
+
+# ------------------------------------------------------------------
+# R79  SIDLE_ALIGN  (subworkflows/local/sidle/align.nf) — align each
+#      region's trimmed ASV representative sequences against that
+#      region's reference kmers.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_align"
+description = "Align regional ASV sequences against regional reference kmers"
+when = "config.sidle_ref_tax_custom != \"\""
+scatter = { variable = "region", values_from = "config.sidle_regions" }
+input = [
+    "intermediates/sidle/trimmed/{region}_rep-seqs.qza",
+    "intermediates/sidle/dbextract/{region}_kmers.qza",
+]
+output = ["intermediates/sidle/align/{region}_align-map.qza"]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_align/xdgconfig"
+export MPLCONFIGDIR="work/sidle_align/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_align/numbacache"
+mkdir -p work/sidle_align intermediates/sidle/align
+cp {input[0]} {input[1]} work/sidle_align/
+cd work/sidle_align
+qiime sidle align-regional-kmers --p-n-workers {threads} --i-kmers {region}_kmers.qza --i-rep-seq {region}_rep-seqs.qza --p-region "{region}" --o-regional-alignment {region}_align-map.qza
+cp {region}_align-map.qza "$OLDPWD/intermediates/sidle/align/"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 4
+memory = "8G"
+
+# ------------------------------------------------------------------
+# R80  SIDLE_DBRECON  (subworkflows/local/sidle/dbrecon.nf) —
+#      reconstruct the full-length reference database from the
+#      per-region kmer maps + regional alignments. The two
+#      expand_inputs entries expand in declaration order, so {input}
+#      is [kmer-map R1..RN, align-map R1..RN] positionally aligned
+#      with config.sidle_regions.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_dbrecon"
+description = "Reconstruct the full-length SIDLE reference database"
+when = "config.sidle_ref_tax_custom != \"\""
+input = []
+expand_inputs = [
+    { pattern = "intermediates/sidle/dbextract/{region}_kmer-map.qza", variables = { region = "config.sidle_regions" } },
+    { pattern = "intermediates/sidle/align/{region}_align-map.qza", variables = { region = "config.sidle_regions" } },
+]
+output = [
+    "intermediates/sidle/reconstruction_map.qza",
+    "intermediates/sidle/reconstruction_summary.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_dbrecon/xdgconfig"
+export MPLCONFIGDIR="work/sidle_dbrecon/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_dbrecon/numbacache"
+mkdir -p work/sidle_dbrecon intermediates/sidle
+cd work/sidle_dbrecon
+mapfile -t ALLIN < <(printf '%s\n' {input})
+read -ra REGIONS <<< "$(tr ',' ' ' <<< "{config.sidle_regions}")"
+N=${#REGIONS[@]}
+DBIN=""
+for ((i=0; i<N; i++)); do
+    KMAP=${ALLIN[$i]}
+    AMAP=${ALLIN[$((N+i))]}
+    DBIN="$DBIN --p-region ${REGIONS[$i]} --i-kmer-map $KMAP --i-regional-alignment $AMAP"
+done
+qiime sidle reconstruct-database --p-n-workers {threads} $DBIN --o-database-map reconstruction_map.qza --o-database-summary reconstruction_summary.qza
+qiime metadata tabulate --m-input-file reconstruction_summary.qza --o-visualization reconstruction_summary.qzv
+mkdir -p exported_map
+qiime tools export --input-path reconstruction_map.qza --output-path exported_map
+cp reconstruction_map.qza reconstruction_summary.qza "$OLDPWD/intermediates/sidle/"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 4
+memory = "16G"
+
+# ------------------------------------------------------------------
+# R81  SIDLE_TABLERECON  (subworkflows/local/sidle/tablerecon.nf) —
+#      reconstruct the multi-region ASV count table. Regional trimmed
+#      tables are prefiltered with scripts/sidle_prefilter_tablerecon.sh
+#      (upstream prefilter_sidle_tablerecon.sh; task.ext.min_counts).
+#      {input} = [map, summary, trimmed-table R1..RN, align-map R1..RN].
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_tablerecon"
+description = "Reconstruct the multi-region count table with q2-sidle"
+when = "config.sidle_ref_tax_custom != \"\""
+input = [
+    "intermediates/sidle/reconstruction_map.qza",
+    "intermediates/sidle/reconstruction_summary.qza",
+]
+expand_inputs = [
+    { pattern = "intermediates/sidle/trimmed/{region}_table.qza", variables = { region = "config.sidle_regions" } },
+    { pattern = "intermediates/sidle/align/{region}_align-map.qza", variables = { region = "config.sidle_regions" } },
+]
+output = [
+    "intermediates/sidle/reconstructed_feature-table.biom",
+    "intermediates/sidle/reconstructed_feature-table.tsv",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_tablerecon/xdgconfig"
+export MPLCONFIGDIR="work/sidle_tablerecon/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_tablerecon/numbacache"
+mkdir -p work/sidle_tablerecon intermediates/sidle
+cd work/sidle_tablerecon
+mapfile -t ALLIN < <(printf '%s\n' {input})
+MAP=${ALLIN[0]}
+SUMMARY=${ALLIN[1]}
+N=$(( (${#ALLIN[@]} - 2) / 2 ))
+TABLES=("${ALLIN[@]:2:N}")
+AMAPS=("${ALLIN[@]:2+N:N}")
+cp "$MAP" reconstruction_map.qza
+cp "$SUMMARY" reconstruction_summary.qza
+for t in "${TABLES[@]}"; do cp "$t" .; done
+for a in "${AMAPS[@]}"; do cp "$a" .; done
+sh "$OLDPWD/scripts/sidle_prefilter_tablerecon.sh" "{config.sidle_min_counts}" "${TABLES[@]##*/}"
+read -ra REGIONS <<< "$(tr ',' ' ' <<< "{config.sidle_regions}")"
+REGION_INPUT=""
+for ((i=0; i<N; i++)); do
+    REGION_INPUT="$REGION_INPUT --p-region ${REGIONS[$i]} --i-regional-alignment ${AMAPS[$i]##*/} --i-regional-table ${TABLES[$i]##*/}.filtered.qza"
+done
+qiime sidle reconstruct-counts --p-n-workers {threads} $REGION_INPUT --i-database-map reconstruction_map.qza --i-database-summary reconstruction_summary.qza --o-reconstructed-table reconstruction_table.qza
+qiime feature-table summarize --i-table reconstruction_table.qza --m-metadata-file {config.metadata_file} --o-visualization reconstructed_table.qzv || true
+mkdir -p exported_table
+qiime tools export --input-path reconstruction_table.qza --output-path exported_table
+biom convert -i exported_table/feature-table.biom -o reconstructed_feature-table.tsv --to-tsv
+cp exported_table/feature-table.biom "$OLDPWD/intermediates/sidle/reconstructed_feature-table.biom"
+cp reconstructed_feature-table.tsv "$OLDPWD/intermediates/sidle/reconstructed_feature-table.tsv"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 4
+memory = "16G"
+
+# ------------------------------------------------------------------
+# R82  SIDLE_TAXRECON  (subworkflows/local/sidle/taxrecon.nf) —
+#      propagate the original reference taxonomy through the
+#      reconstruction map.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_taxrecon"
+description = "Reconstruct taxonomy through the SIDLE database map"
+when = "config.sidle_ref_tax_custom != \"\""
+input = [
+    "intermediates/sidle/reconstruction_map.qza",
+    "intermediates/sidle/db_taxonomy.qza",
+]
+output = ["intermediates/sidle/reconstruction_taxonomy.tsv"]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_taxrecon/xdgconfig"
+export MPLCONFIGDIR="work/sidle_taxrecon/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_taxrecon/numbacache"
+mkdir -p work/sidle_taxrecon intermediates/sidle
+cp {input[0]} {input[1]} work/sidle_taxrecon/
+cd work/sidle_taxrecon
+qiime sidle reconstruct-taxonomy --i-reconstruction-map reconstruction_map.qza --i-taxonomy db_taxonomy.qza --o-reconstructed-taxonomy reconstruction_taxonomy.qza
+mkdir -p exported_tax
+qiime tools export --input-path reconstruction_taxonomy.qza --output-path exported_tax
+cp exported_tax/taxonomy.tsv "$OLDPWD/intermediates/sidle/reconstruction_taxonomy.tsv"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R83  SIDLE_FILTTAX  (subworkflows/local/sidle/filttax.nf) — filter
+#      the reconstructed taxonomy to features present in the counts
+#      table and merge both (verbatim inline-R port in R script; tax
+#      table is the FIRST argument, counts table the SECOND).
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_filttax"
+description = "Filter reconstructed taxonomy against the reconstructed table"
+when = "config.sidle_ref_tax_custom != \"\""
+input = [
+    "intermediates/sidle/reconstruction_taxonomy.tsv",
+    "intermediates/sidle/reconstructed_feature-table.tsv",
+]
+output = [
+    "results/sidle/reconstructed_taxonomy.tsv",
+    "results/sidle/reconstructed_merged.tsv",
+]
+shell = '''
+mkdir -p work/sidle_filttax results/sidle
+cd work/sidle_filttax
+Rscript "$OLDPWD/scripts/sidle_filttax.R" {input[0]} {input[1]} "$OLDPWD/results/sidle/reconstructed_taxonomy.tsv" "$OLDPWD/results/sidle/reconstructed_merged.tsv"
+'''
+tags = ["sidle", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 1
+memory = "2G"
+
+# ------------------------------------------------------------------
+# R84  SIDLE_SEQRECON  (subworkflows/local/sidle/seqrecon.nf; requires
+#      the optional aligned reference) — reconstruct full-length
+#      representative fragments.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_seqrecon"
+description = "Reconstruct representative fragment sequences with q2-sidle"
+when = "config.sidle_ref_tax_custom != \"\" && config.sidle_ref_aln_custom != \"\""
+input = [
+    "intermediates/sidle/reconstruction_map.qza",
+    "intermediates/sidle/reconstruction_summary.qza",
+    "intermediates/sidle/db_alignedsequences.qza",
+]
+output = ["results/sidle/reconstructed_fragments.fasta"]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_seqrecon/xdgconfig"
+export MPLCONFIGDIR="work/sidle_seqrecon/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_seqrecon/numbacache"
+mkdir -p work/sidle_seqrecon results/sidle
+cp {input[0]} {input[1]} {input[2]} work/sidle_seqrecon/
+cd work/sidle_seqrecon
+qiime sidle reconstruct-fragment-rep-seqs --i-reconstruction-map reconstruction_map.qza --i-reconstruction-summary reconstruction_summary.qza --i-aligned-sequences db_alignedsequences.qza --o-representative-fragments reconstruction_fragments.qza
+mkdir -p exported_seqs
+qiime tools export --input-path reconstruction_fragments.qza --output-path exported_seqs
+cp exported_seqs/dna-sequences.fasta "$OLDPWD/results/sidle/reconstructed_fragments.fasta"
+'''
+tags = ["sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R85  SIDLE_TREERECON  (subworkflows/local/sidle/treerecon.nf;
+#      requires aligned reference + a SEPP reference tree qza —
+#      upstream limits these to Greengenes 13_8 / SILVA 128) — place
+#      the reconstructed fragments on the reference tree.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sidle_treerecon"
+description = "Insert reconstructed fragments into the reference tree with SEPP"
+when = "config.sidle_ref_tax_custom != \"\" && config.sidle_ref_aln_custom != \"\" && config.sidle_ref_tree_custom != \"\""
+input = [
+    "results/sidle/reconstructed_fragments.fasta",
+    "{config.sidle_ref_tree_custom}",
+]
+output = [
+    "results/sidle/reconstructed_tree.qza",
+    "results/sidle/reconstructed_tree.nwk",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/sidle_treerecon/xdgconfig"
+export MPLCONFIGDIR="work/sidle_treerecon/mplconfigdir"
+export NUMBA_CACHE_DIR="work/sidle_treerecon/numbacache"
+mkdir -p work/sidle_treerecon results/sidle
+cp {input[0]} work/sidle_treerecon/reconstructed_fragments.fasta
+cp {input[1]} work/sidle_treerecon/ref_db_tree.qza
+cd work/sidle_treerecon
+qiime fragment-insertion sepp --p-threads {threads} --i-representative-sequences reconstructed_fragments.fasta --i-reference-database ref_db_tree.qza --o-tree reconstructed_tree.qza --o-placements reconstruction_placements.qza
+mkdir -p exported_tree
+qiime tools export --input-path reconstructed_tree.qza --output-path exported_tree
+cp exported_tree/tree.nwk "$OLDPWD/results/sidle/reconstructed_tree.nwk"
+cp reconstructed_tree.qza "$OLDPWD/results/sidle/reconstructed_tree.qza"
+'''
+tags = ["sidle", "tree"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 4
+memory = "16G"
+
+# ------------------------------------------------------------------
+# R86  QIIME2_INTAX_SIDLE  — import the SIDLE reconstructed taxonomy
+#      into the SHARED intermediates/qiime2/taxonomy.qza path and
+#      re-import the reconstructed table as the downstream
+#      FeatureTable[Frequency] (upstream: multiregion SIDLE REPLACES
+#      the DADA2 ASV table downstream; "any ASV postprocessing is not
+#      allowed"). In upstream the reconstructed qza artifacts feed
+#      QIIME2_BARPLOT/diversity directly; the port re-imports the
+#      exported biom to the shared paths.
+# ------------------------------------------------------------------
+[[rules]]
+name = "qiime2_intax_sidle"
+description = "Import SIDLE reconstructed taxonomy and table into QIIME2"
+when = "config.sidle_ref_tax_custom != \"\" && config.cut_its == \"none\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy"
+input = [
+    "results/sidle/reconstructed_taxonomy.tsv",
+    "intermediates/sidle/reconstructed_feature-table.biom",
+]
+output = [
+    "intermediates/qiime2/taxonomy.qza",
+    "intermediates/qiime2/table.qza",
+]
+shell = '''
+export XDG_CONFIG_HOME="work/qiime2_intax_sidle/xdgconfig"
+export MPLCONFIGDIR="work/qiime2_intax_sidle/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intax_sidle/numbacache"
+mkdir -p work/qiime2_intax_sidle
+cp {input[0]} work/qiime2_intax_sidle/sidle_taxonomy.tsv
+cp {input[1]} work/qiime2_intax_sidle/reconstructed_feature-table.biom
+cd work/qiime2_intax_sidle
+qiime tools import --type 'FeatureData[Taxonomy]' --input-path sidle_taxonomy.tsv --output-path taxonomy.qza
+qiime tools import --type 'FeatureTable[Frequency]' --input-path reconstructed_feature-table.biom --input-format BIOMV210Format --output-path table.qza
+cp taxonomy.qza table.qza "$OLDPWD/intermediates/qiime2/"
+'''
+tags = ["qiime2", "sidle"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R87  QIIME2_INTREE_SIDLE  (template QIIME2_INTREE_PPLACE) — import
+#      the SEPP-reconstructed tree (results/sidle/reconstructed_tree.nwk)
+#      as the rooted QIIME2 tree for downstream diversity analyses.
+# ------------------------------------------------------------------
+[[rules]]
+name = "qiime2_intree_sidle"
+description = "Import SIDLE reconstructed tree as the rooted QIIME2 tree"
+when = "config.sidle_ref_tax_custom != \"\" && config.sidle_ref_aln_custom != \"\" && config.sidle_ref_tree_custom != \"\" && config.pplace_tree == \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices)"
+input = ["results/sidle/reconstructed_tree.nwk"]
+output = ["intermediates/qiime2/rooted-tree.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intree_sidle/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intree_sidle/numbacache"
+mkdir -p work/qiime2_intree_sidle
+qiime tools import --type 'Phylogeny[Rooted]' --input-path {input[0]} --output-path {output[0]}
+'''
+tags = ["qiime2", "sidle", "diversity"]
+
+[rules.environment]
+singularity = "docker://nf-core/pipesidle:0.1.0-beta"
+
+[rules.resources]
+threads = 2
+memory = "3G"

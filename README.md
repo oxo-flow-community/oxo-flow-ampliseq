@@ -223,7 +223,9 @@ for the exact ported state. Attribution details are in `NOTICE.md`.
 | VSEARCH_LCA_TAXONOMY_WF | `vsearch_lca_format_db`, `vsearch_lca_classify`, `vsearch_lca_format_tax` | biocontainers:v1.2.0_cv1 (upstream-declared `docker.io` ref), vsearch 2.31.0 | same FORMAT_TAXONOMY gzip check as the SINTAX rule; classify args identical (`--usearch_global --id {vsearch_lca_id} --gzip_decompress --top_hits_only --output_no_hits --maxaccepts/--maxrejects/--lca_cutoff/--query_cov from config --n_mismatch --notrunclates --lcaout`, ext.args from `conf/modules.config:631`); the converter script (verbatim `bin/convert_vsearch_lca_output.py`) expands the LCA lineages over the default `vsearch_lca_taxlevels` |
 | QIIME2_INTAX (per-chain variants) | `qiime2_intax_pplace`, `qiime2_intax_sintax`, `qiime2_intax_kraken2`, `qiime2_intax_vsearch_lca` | qiime2 2026.1 | identical imports into the shared `intermediates/qiime2/taxonomy.qza` slot (each branch's gate is mutually exclusive per the upstream dispatch priority); pplace/sintax/vsearch use the same `bin/parse_dada2_taxonomy.r` path as `qiime2_intax`; the kraken2 variant replicates the upstream quirk where KRAKEN2_TAXONOMY_WF's qiime2_tsv keeps its header row and QIIME2_INTAX_KRAKEN2 runs an empty script (plain `cp`) — imported as HeaderlessTSV with the header consumed as a data row, exactly as upstream carries it |
 | QIIME2_TREE (PPLACE replacement) | `qiime2_intree_pplace` | qiime2 2026.1 | on the PPLACE branch the grafted `intermediates/pplace/grafted.newick` (GAPPA_GRAFT output) is imported as the rooted tree and replaces the de-novo mafft→mask→fasttree `qiime2_diversity_tree` run, mirroring upstream's `ch_trees_for_qiime` switch |
-| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase), SIDLE long-read species identification (`sidle_wf`), the PPLACE_SHEET variant (`params.pplace_sheet`, hmmer-based) and the hmmer/mafft `pplace_alnmethod` branches — not ported; SIDLE needs its own reference database setup, env and fixtures, the non-clustalo placement branches are non-default upstream |
+| SIDLE_TAXONOMY_WF (custom-DB path) | `sidle_db_prep`, `sidle_indb`, `sidle_indbaligned`, `sidle_dbfilt`, `sidle_in`, `sidle_trim`, `sidle_dbextract`, `sidle_align`, `sidle_dbrecon`, `sidle_tablerecon`, `sidle_taxrecon`, `sidle_filttax`, `sidle_seqrecon`, `sidle_treerecon` | pipesidle 0.1.0-beta (qiime2 2021.4 + rescript + q2-sidle + q2-fragment-insertion/sepp) | multi-region OTU picking (`sidle_wf`): stage a custom full-length reference (tax+seq[, aln][, sepp tree qza] via `sidle_ref_*_custom`, fail-fast checks in `sidle_db_prep`), import (HeaderlessTSVTaxonomyFormat), rescript cull/taxa-filter, biom-convert + import the DADA2 ASV table/seqs, per-region trim-dada2-posthoc / extract-reads / prepare-extracted-region / align-regional-kmers (scattered over `sidle_regions`), reconstruct-database/-counts/-taxonomy/-fragment-rep-seqs + SEPP fragment insertion, prefilter + filter/merge taxonomy via `scripts/sidle_prefilter_tablerecon.sh` + `scripts/sidle_filttax.R` (verbatim). `sidle_min_counts` maps to the prefilter arg (upstream `task.ext.min_counts`, default 0). Only the `sidle_ref_tax_custom` custom-db path is ported — the FORMAT_TAXONOMY_SIDLE standard-db path, the nanopore branch, syncom controls and the PPLACE_SHEET/hmmer/mafft pplace variants are not ported |
+| QIIME2_INTAX/INTREE (SIDLE replacement) | `qiime2_intax_sidle`, `qiime2_intree_sidle` | pipesidle 0.1.0-beta | the reconstructed taxonomy + table are imported into the SHARED `intermediates/qiime2/taxonomy.qza`/`table.qza` slots (the SIDLE table REPLACES the DADA2 ASV table downstream, as upstream — "any ASV postprocessing is not allowed"); the SEPP `results/sidle/reconstructed_tree.nwk` replaces the de-novo `qiime2_diversity_tree` on the full SIDLE branch (tree + aln + tax all set). When no SIDLE tree is configured the de-novo tree still runs on the DADA2 rep-seqs |
+| — (not ported) | — | — | nanopore branch (`params.nanopore` — absent from the 2.18.0 codebase, docs only), syncom controls (`params.syncom` — absent from the 2.18.0 codebase), the PPLACE_SHEET variant (`params.pplace_sheet`, hmmer-based) and the hmmer/mafft `pplace_alnmethod` branches — not ported; the non-clustalo placement branches are non-default upstream |
 | softwareVersionsToYAML + `versions.yml` collection (`pipeline_info/nf_core_ampliseq_software_mqc_versions.yml`, mixed into MultiQC inputs) | engine-native export: `oxo-flow report --versions-yml <file> main.oxoflow` | — | oxo-flow ≥ 0.17.0 exports an nf-core-style `versions.yml` derived statically from the workflow declarations: one entry per rule with the pinned container tag or conda env file + its sha256, plus a `references:` section fed by the workflow's `[[reference_db]]` blocks (SBDI-GTDB R11-RS232-1 here). Deviation: it is a standalone CI-diff artifact, not a per-process runtime capture — upstream records each tool's runtime version at execution time and mixes the collected file into MultiQC, while the export reflects the pinned versions in the definition (resolved runtime package versions depend on the execution environment). Per-rule `versions.yml` emission inside every command is deliberately not replicated (it would change every rule's command while the default plan stays byte-identical). |
 | MERGE_STATS_STD | `merge_stats` | r-base 4.2 (envs/dada2.yaml pin; upstream declares the Wave image bioconductor-dada2_r-base_r-digest_tbb, no visible pin) | identical merge by `sample` |
 | DB download (launcher) | `download_taxonomy_db` | curl | upstream downloads the reference DB in the Nextflow launcher (`file(url)`); the port makes it an explicit system-backend rule |
@@ -303,6 +305,25 @@ Other notes:
   tree in-shell rather than through a channel; `format_pplacetax.R`
   runs in a conda env (`envs/pplacetax.yaml`) instead of upstream's
   Wave container.
+- SIDLE multi-region OTU picking, added 2026-09-08: the port implements
+  the `sidle_ref_tax_custom` custom-database path only (the
+  standard-DB FORMAT_TAXONOMY_SIDLE path is not ported); upstream
+  requires `skip_report = true` when SIDLE runs (its report template
+  has no SIDLE section) — the port's `summary_report` is
+  `[ -f ]`-conditional and has no SIDLE section either. Deviations:
+  per-region DADA2_SPLITREGIONS output is not replicated — SIDLE
+  consumes the merged `results/dada2/ASV_table.tsv`/`ASV_seqs.fasta`
+  (single-sample-inference path, the same files `qiime2_inasv` reads);
+  `qiime2_inseq` still imports the DADA2 rep-seqs (upstream switches
+  to the reconstructed fragments for phyloseq/TSE — the shared
+  `rep-seqs.qza` slot keeps the DADA2 sequences); regions are
+  processed in `config.sidle_regions` declaration order (upstream
+  uses `toSortedList`); scattered outputs are named `{region}`-only
+  (upstream appends the trim length, e.g. `V4_253`); and
+  `sidle_min_counts` feeds the prefilter script directly (upstream
+  `task.ext.min_counts`, default 0). All SIDLE rules run in the
+  upstream-declared `docker://nf-core/pipesidle:0.1.0-beta` image
+  (qiime2 2021.4 + q2-sidle 0.1.0-beta + sepp 4.3.10).
 
 ## Test
 
