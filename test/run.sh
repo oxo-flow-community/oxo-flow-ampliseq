@@ -97,4 +97,7 @@ done
 trap - EXIT
 rm -f .tmp.oxoflow
 
+echo "==> branch-flip: SIDLE multi-region OTU picking"
+OXO="$OXO" ./test/sidle_test.sh
+
 echo "PASS"
