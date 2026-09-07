@@ -122,6 +122,30 @@ sbdiexport = false
 skip_phyloseq = true
 skip_tse = true
 skip_report = true
+# --- alternative classification chains (upstream kraken2_taxonomy_wf /
+#     VSEARCH_SINTAX / VSEARCH_USEARCHGLOBAL_LCA / PPLACE — off by
+#     default, each gated on its *_ref_tax_custom / pplace_tree key) ---
+kraken2_ref_tax_custom = ""    # kraken2 db directory or .tar.gz bundle
+sintax_ref_tax_custom = ""     # FASTA with SINTAX-formatted headers (plain or gzipped)
+vsearch_lca_ref_tax_custom = ""  # FASTA with taxonomy headers (plain or gzipped)
+kraken2_confidence = 0.0       # upstream params.kraken2_confidence
+kraken2_assign_taxlevels = ""  # upstream default "D,P,C,O,F,G,S" (used when empty)
+sintax_assign_taxlevels = ""   # upstream default "Kingdom,Phylum,Class,Order,Family,Genus,Species"
+vsearch_lca_assign_taxlevels = ""  # same default as sintax
+vsearch_lca_id = 0.9           # upstream params.vsearch_lca_id
+vsearch_lca_maxaccepts = 0     # upstream params.vsearch_lca_maxaccepts
+vsearch_lca_maxrejects = 0     # upstream params.vsearch_lca_maxrejects
+vsearch_lca_lca_cutoff = 0.9   # upstream params.vsearch_lca_lca_cutoff
+vsearch_lca_query_cov = 1.0    # upstream params.vsearch_lca_query_cov
+# --- PPLACE phylogenetic placement (upstream params.pplace_*; the
+#     chain runs when pplace_tree is set — EPA-NG placement of ASVs on a
+#     user tree, GAPPA graft/assign/heat-tree, clustalo alignment) ---
+pplace_tree = ""               # reference phylogeny (newick)
+pplace_aln = ""                # reference alignment matching the tree tips
+pplace_taxonomy = ""           # optional reference taxonomy TSV (GAPPA assign)
+pplace_name = "user_tree"      # output name prefix (upstream default params.pplace_name ?: 'user_tree')
+pplace_model = ""              # phylogenetic model for EPA-NG (--model), e.g. "GTR+F+I+I+R3"
+pplace_alnmethod = "clustalo"  # upstream params.pplace_alnmethod; the port implements the clustalo branch
 
 # Reference database declaration (surfaced in the engine-native versions.yml
 # export: `oxo-flow report --versions-yml`). The SBDI-GTDB taxonomy is the
@@ -1047,7 +1071,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax"
 description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\""
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\" && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\")"
 input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1066,10 +1090,106 @@ singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 threads = 2
 memory = "3G"
 
+# Alternative-classification intax variants: each imports its tool's
+# taxonomy table into the SHARED intermediates/qiime2/taxonomy.qza path.
+# The when-gates encode the upstream taxonomy dispatch priority
+# (ampliseq.nf 936-975): pplace > dada2 > sintax > kraken2 > native
+# qiime2 > vsearch_lca — a rule only excludes the tools ranked ABOVE it.
+[[rules]]
+name = "qiime2_intax_pplace"
+description = "Import phylogenetic-placement taxonomy into QIIME2 FeatureData[Taxonomy]"
+when = "config.pplace_tree != \"\" && config.pplace_taxonomy != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy"
+input = ["results/pplace/{config.pplace_name}.taxonomy.tsv"]
+output = ["intermediates/qiime2/taxonomy.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intax_pplace/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intax_pplace/numbacache"
+mkdir -p work/qiime2_intax_pplace
+Rscript scripts/parse_dada2_taxonomy.r {input[0]} work/qiime2_intax_pplace/tax.tsv
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path work/qiime2_intax_pplace/tax.tsv --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_intax_sintax"
+description = "Import SINTAX taxonomy into QIIME2 FeatureData[Taxonomy]"
+when = "config.sintax_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy"
+input = ["results/sintax/ASV_tax.sintax_format.tsv"]
+output = ["intermediates/qiime2/taxonomy.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intax_sintax/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intax_sintax/numbacache"
+mkdir -p work/qiime2_intax_sintax
+Rscript scripts/parse_dada2_taxonomy.r {input[0]} work/qiime2_intax_sintax/tax.tsv
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path work/qiime2_intax_sintax/tax.tsv --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_intax_kraken2"
+description = "Import Kraken2 taxonomy into QIIME2 FeatureData[Taxonomy]"
+when = "config.kraken2_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\""
+input = ["results/kraken2/ASV_tax.kraken2.into-qiime2.tsv"]
+output = ["intermediates/qiime2/taxonomy.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intax_kraken2/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intax_kraken2/numbacache"
+mkdir -p work/qiime2_intax_kraken2
+# upstream QIIME2_INTAX passes an empty script for kraken2: cp passthrough
+# (the converter TSV keeps its header row; imported as headerless, the
+# quirk upstream also carries)
+cp {input[0]} work/qiime2_intax_kraken2/tax.tsv
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path work/qiime2_intax_kraken2/tax.tsv --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "qiime2_intax_vsearch_lca"
+description = "Import VSEARCH LCA taxonomy into QIIME2 FeatureData[Taxonomy]"
+when = "config.vsearch_lca_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\""
+input = ["results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv"]
+output = ["intermediates/qiime2/taxonomy.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intax_vsearch_lca/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intax_vsearch_lca/numbacache"
+mkdir -p work/qiime2_intax_vsearch_lca
+Rscript scripts/parse_dada2_taxonomy.r {input[0]} work/qiime2_intax_vsearch_lca/tax.tsv
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path work/qiime2_intax_vsearch_lca/tax.tsv --output-path {output[0]}
+'''
+tags = ["qiime2"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
 [[rules]]
 name = "qiime2_barplot"
 description = "QIIME2 taxa barplot visualization and export"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && !config.skip_barplot && config.run_qiime2"
+when = "!config.skip_qiime && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\") && !config.skip_barplot && config.run_qiime2"
 input = ["{config.metadata_file}", "intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
 output = [
     "results/qiime2/barplot/index.html",
@@ -1134,11 +1254,15 @@ conda = "envs/dada2.yaml"
 threads = 1
 memory = "1G"
 
-# QIIME2_TREE: mafft -> mask -> fasttree -> midpoint-root
+# QIIME2_TREE: mafft -> mask -> fasttree -> midpoint-root. With
+# pplace configured the gappa-grafted placement tree replaces this
+# de-novo path (mutually exclusive via the pplace_tree gate; the
+# pplace tree then feeds rarefaction/diversity through
+# qiime2_intree_pplace below).
 [[rules]]
 name = "qiime2_diversity_tree"
 description = "Build rooted phylogenetic tree from representative sequences"
-when = "config.run_qiime2 && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices)"
+when = "config.run_qiime2 && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices) && config.pplace_tree == \"\""
 input = ["intermediates/qiime2/rep-seqs.qza"]
 output = [
     "intermediates/qiime2/rooted-tree.qza",
@@ -1162,6 +1286,32 @@ singularity = "docker://quay.io/qiime2/amplicon:2026.1"
 [rules.resources]
 threads = 6
 memory = "6G"
+
+# QIIME2_INTREE_PPLACE: with phylogenetic placement the gappa-grafted
+# tree (intermediates/pplace/grafted.newick) is imported as the rooted
+# tree for downstream diversity analyses instead of the de-novo
+# fasttree path (upstream: ch_intree_pplace feeding QIIME2_TREE's
+# rooted-tree output).
+[[rules]]
+name = "qiime2_intree_pplace"
+description = "Import gappa-grafted placement tree as the rooted QIIME2 tree"
+when = "config.pplace_tree != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_qiime_downstream && (!config.skip_alpha_rarefaction || !config.skip_diversity_indices)"
+input = ["intermediates/pplace/grafted.newick"]
+output = ["intermediates/qiime2/rooted-tree.qza"]
+shell = '''
+export MPLCONFIGDIR="work/qiime2_intree_pplace/mplconfigdir"
+export NUMBA_CACHE_DIR="work/qiime2_intree_pplace/numbacache"
+mkdir -p work/qiime2_intree_pplace
+qiime tools import --type 'Phylogeny[Rooted]' --input-path {input[0]} --output-path {output[0]}
+'''
+tags = ["qiime2", "diversity"]
+
+[rules.environment]
+singularity = "docker://quay.io/qiime2/amplicon:2026.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
 
 # QIIME2_ALPHARAREFACTION: max-depth from the overall stats table
 # (count_table_minmax_reads.py maximum), capped at 75000; steps =
@@ -1764,7 +1914,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_preptax"
 description = "Train a QIIME2 Naive-Bayes classifier from the SILVA reference"
-when = "config.run_qiime2 && !config.skip_taxonomy && config.qiime_ref_taxonomy != \"\""
+when = "config.run_qiime2 && !config.skip_taxonomy && config.qiime_ref_taxonomy != \"\" && config.classifier == \"\""
 input = []
 output = ["intermediates/qiime2/classifier.qza"]
 shell = '''
@@ -1801,7 +1951,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_classify"
 description = "Classify ASVs with a trained QIIME2 classifier"
-when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.classifier != \"\")"
+when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.classifier != \"\") && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\""
 input = ["intermediates/qiime2/rep-seqs.qza", "intermediates/qiime2/classifier.qza"]
 output = [
     "intermediates/qiime2/taxonomy.qza",
@@ -2003,6 +2153,148 @@ conda = "envs/phyloseq.yaml"
 threads = 2
 memory = "3G"
 
+# Per-tool R-object variants: upstream mixes EVERY configured taxonomy
+# tool into the roobject channels independently (no priority
+# exclusions), so these variants key only on their own tool's config
+# key. Alt tables pass AS-IS; the placement tree is used when pplace is
+# configured (file-exists guarded, consistent with summary_report).
+[[rules]]
+name = "phyloseq_pplace"
+description = "Phyloseq R object (RDS) from the phylogenetic-placement taxonomy"
+when = "!config.skip_taxonomy && !config.skip_phyloseq && config.pplace_tree != \"\" && config.pplace_taxonomy != \"\""
+input = [
+    "results/pplace/reformat_{config.pplace_name}.taxonomy.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+    "intermediates/pplace/grafted.newick",
+]
+output = [
+    "results/phyloseq/pplace_phyloseq.rds",
+]
+shell = '''
+mkdir -p work/phyloseq_pplace results/phyloseq
+cp {input[0]} work/phyloseq_pplace/taxonomy.tsv
+cp {input[1]} work/phyloseq_pplace/ASV_table.tsv
+cp {input[2]} work/phyloseq_pplace/metadata.tsv
+cp {input[3]} work/phyloseq_pplace/grafted.newick
+cd work/phyloseq_pplace
+Rscript ../../scripts/phyloseq.R pplace taxonomy.tsv ASV_table.tsv metadata.tsv grafted.newick
+cp pplace_phyloseq.rds "$OLDPWD/results/phyloseq/pplace_phyloseq.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/phyloseq.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "phyloseq_kraken2"
+description = "Phyloseq R object (RDS) from the Kraken2 taxonomy"
+when = "!config.skip_taxonomy && !config.skip_phyloseq && config.kraken2_ref_tax_custom != \"\""
+input = [
+    "results/kraken2/ASV_tax.kraken2.into-qiime2.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/phyloseq/kraken2_phyloseq.rds",
+]
+shell = '''
+mkdir -p work/phyloseq_kraken2 results/phyloseq
+cp {input[0]} work/phyloseq_kraken2/taxonomy.tsv
+cp {input[1]} work/phyloseq_kraken2/ASV_table.tsv
+cp {input[2]} work/phyloseq_kraken2/metadata.tsv
+cd work/phyloseq_kraken2
+if [ -f ../../intermediates/pplace/grafted.newick ]; then
+    cp ../../intermediates/pplace/grafted.newick tree.newick
+else
+    cp /dev/null tree.newick
+fi
+Rscript ../../scripts/phyloseq.R kraken2 taxonomy.tsv ASV_table.tsv metadata.tsv tree.newick
+cp kraken2_phyloseq.rds "$OLDPWD/results/phyloseq/kraken2_phyloseq.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/phyloseq.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "phyloseq_sintax"
+description = "Phyloseq R object (RDS) from the SINTAX taxonomy"
+when = "!config.skip_taxonomy && !config.skip_phyloseq && config.sintax_ref_tax_custom != \"\""
+input = [
+    "results/sintax/ASV_tax.sintax_format.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/phyloseq/sintax_phyloseq.rds",
+]
+shell = '''
+mkdir -p work/phyloseq_sintax results/phyloseq
+cp {input[0]} work/phyloseq_sintax/taxonomy.tsv
+cp {input[1]} work/phyloseq_sintax/ASV_table.tsv
+cp {input[2]} work/phyloseq_sintax/metadata.tsv
+cd work/phyloseq_sintax
+if [ -f ../../intermediates/pplace/grafted.newick ]; then
+    cp ../../intermediates/pplace/grafted.newick tree.newick
+else
+    cp /dev/null tree.newick
+fi
+Rscript ../../scripts/phyloseq.R sintax taxonomy.tsv ASV_table.tsv metadata.tsv tree.newick
+cp sintax_phyloseq.rds "$OLDPWD/results/phyloseq/sintax_phyloseq.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/phyloseq.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "phyloseq_vsearch_lca"
+description = "Phyloseq R object (RDS) from the VSEARCH LCA taxonomy"
+when = "!config.skip_taxonomy && !config.skip_phyloseq && config.vsearch_lca_ref_tax_custom != \"\""
+input = [
+    "results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/phyloseq/vsearch_lca_phyloseq.rds",
+]
+shell = '''
+mkdir -p work/phyloseq_vsearch_lca results/phyloseq
+cp {input[0]} work/phyloseq_vsearch_lca/taxonomy.tsv
+cp {input[1]} work/phyloseq_vsearch_lca/ASV_table.tsv
+cp {input[2]} work/phyloseq_vsearch_lca/metadata.tsv
+cd work/phyloseq_vsearch_lca
+if [ -f ../../intermediates/pplace/grafted.newick ]; then
+    cp ../../intermediates/pplace/grafted.newick tree.newick
+else
+    cp /dev/null tree.newick
+fi
+Rscript ../../scripts/phyloseq.R vsearch_lca taxonomy.tsv ASV_table.tsv metadata.tsv tree.newick
+cp vsearch_lca_phyloseq.rds "$OLDPWD/results/phyloseq/vsearch_lca_phyloseq.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/phyloseq.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
 [[rules]]
 name = "treesummarizedexperiment"
 description = "TreeSummarizedExperiment R object (RDS) from the DADA2 ASV and taxonomy tables"
@@ -2034,9 +2326,150 @@ threads = 2
 memory = "3G"
 
 [[rules]]
+name = "tse_pplace"
+description = "TreeSummarizedExperiment R object (RDS) from the phylogenetic-placement taxonomy"
+when = "!config.skip_taxonomy && !config.skip_tse && config.pplace_tree != \"\" && config.pplace_taxonomy != \"\""
+input = [
+    "results/pplace/reformat_{config.pplace_name}.taxonomy.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+    "intermediates/pplace/grafted.newick",
+]
+output = [
+    "results/treesummarizedexperiment/pplace_TreeSummarizedExperiment.rds",
+]
+shell = '''
+mkdir -p work/tse_pplace results/treesummarizedexperiment
+cp {input[0]} work/tse_pplace/taxonomy.tsv
+cp {input[1]} work/tse_pplace/ASV_table.tsv
+cp {input[2]} work/tse_pplace/metadata.tsv
+cp {input[3]} work/tse_pplace/grafted.newick
+cd work/tse_pplace
+Rscript ../../scripts/treesummarizedexperiment.R pplace taxonomy.tsv ASV_table.tsv metadata.tsv grafted.newick
+cp pplace_TreeSummarizedExperiment.rds "$OLDPWD/results/treesummarizedexperiment/pplace_TreeSummarizedExperiment.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/tse.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "tse_kraken2"
+description = "TreeSummarizedExperiment R object (RDS) from the Kraken2 taxonomy"
+when = "!config.skip_taxonomy && !config.skip_tse && config.kraken2_ref_tax_custom != \"\""
+input = [
+    "results/kraken2/ASV_tax.kraken2.into-qiime2.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/treesummarizedexperiment/kraken2_TreeSummarizedExperiment.rds",
+]
+shell = '''
+mkdir -p work/tse_kraken2 results/treesummarizedexperiment
+cp {input[0]} work/tse_kraken2/taxonomy.tsv
+cp {input[1]} work/tse_kraken2/ASV_table.tsv
+cp {input[2]} work/tse_kraken2/metadata.tsv
+cd work/tse_kraken2
+if [ -f ../../intermediates/pplace/grafted.newick ]; then
+    cp ../../intermediates/pplace/grafted.newick tree.newick
+else
+    cp /dev/null tree.newick
+fi
+Rscript ../../scripts/treesummarizedexperiment.R kraken2 taxonomy.tsv ASV_table.tsv metadata.tsv tree.newick
+cp kraken2_TreeSummarizedExperiment.rds "$OLDPWD/results/treesummarizedexperiment/kraken2_TreeSummarizedExperiment.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/tse.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "tse_sintax"
+description = "TreeSummarizedExperiment R object (RDS) from the SINTAX taxonomy"
+when = "!config.skip_taxonomy && !config.skip_tse && config.sintax_ref_tax_custom != \"\""
+input = [
+    "results/sintax/ASV_tax.sintax_format.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/treesummarizedexperiment/sintax_TreeSummarizedExperiment.rds",
+]
+shell = '''
+mkdir -p work/tse_sintax results/treesummarizedexperiment
+cp {input[0]} work/tse_sintax/taxonomy.tsv
+cp {input[1]} work/tse_sintax/ASV_table.tsv
+cp {input[2]} work/tse_sintax/metadata.tsv
+cd work/tse_sintax
+if [ -f ../../intermediates/pplace/grafted.newick ]; then
+    cp ../../intermediates/pplace/grafted.newick tree.newick
+else
+    cp /dev/null tree.newick
+fi
+Rscript ../../scripts/treesummarizedexperiment.R sintax taxonomy.tsv ASV_table.tsv metadata.tsv tree.newick
+cp sintax_TreeSummarizedExperiment.rds "$OLDPWD/results/treesummarizedexperiment/sintax_TreeSummarizedExperiment.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/tse.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+[[rules]]
+name = "tse_vsearch_lca"
+description = "TreeSummarizedExperiment R object (RDS) from the VSEARCH LCA taxonomy"
+when = "!config.skip_taxonomy && !config.skip_tse && config.vsearch_lca_ref_tax_custom != \"\""
+input = [
+    "results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv",
+    "results/dada2/ASV_table.tsv",
+    "{config.metadata_file}",
+]
+output = [
+    "results/treesummarizedexperiment/vsearch_lca_TreeSummarizedExperiment.rds",
+]
+shell = '''
+mkdir -p work/tse_vsearch_lca results/treesummarizedexperiment
+cp {input[0]} work/tse_vsearch_lca/taxonomy.tsv
+cp {input[1]} work/tse_vsearch_lca/ASV_table.tsv
+cp {input[2]} work/tse_vsearch_lca/metadata.tsv
+cd work/tse_vsearch_lca
+if [ -f ../../intermediates/pplace/grafted.newick ]; then
+    cp ../../intermediates/pplace/grafted.newick tree.newick
+else
+    cp /dev/null tree.newick
+fi
+Rscript ../../scripts/treesummarizedexperiment.R vsearch_lca taxonomy.tsv ASV_table.tsv metadata.tsv tree.newick
+cp vsearch_lca_TreeSummarizedExperiment.rds "$OLDPWD/results/treesummarizedexperiment/vsearch_lca_TreeSummarizedExperiment.rds"
+'''
+tags = ["reporting"]
+
+[rules.environment]
+conda = "envs/tse.yaml"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# Summary report: gate opens for ANY taxonomy winner (upstream
+# phyloseq.join of all present R-objects); DADA2 inputs stay in the
+# input array because the template always renders the DADA2 sections
+# from them.
+[[rules]]
 name = "summary_report"
 description = "Rmd summary report over QC, DADA2, taxonomy, SBDI and R-object results"
-when = "!config.skip_report && !config.skip_taxonomy && !config.skip_dada_taxonomy"
+when = "!config.skip_report && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\")"
 input = [
     "assets/report_template.Rmd",
     "assets/nf-core_style.css",
@@ -2116,15 +2549,28 @@ if [ -f ../../results/SBDI/annotation.tsv ]; then
     mv event.tsv dna.tsv emof.tsv asv-table.tsv annotation.tsv sbdi/
     params+=("sbdi='sbdi/event.tsv,sbdi/dna.tsv,sbdi/emof.tsv,sbdi/asv-table.tsv,sbdi/annotation.tsv'")
 fi
-if [ -f ../../results/phyloseq/dada2_phyloseq.rds ]; then
+# R-objects: comma-join EVERY present RDS (dada2 + alt tools) into the
+# single phyloseq=/tse= param — upstream phyloseq.join(",") takes one
+# comma-joined path list per object type.
+ro_phyloseq=""
+for f in ../../results/phyloseq/*_phyloseq.rds; do
+    [ -f "$f" ] || continue
     mkdir -p phyloseq
-    cp ../../results/phyloseq/dada2_phyloseq.rds phyloseq/
-    params+=("phyloseq='phyloseq/dada2_phyloseq.rds'")
+    cp "$f" phyloseq/
+    ro_phyloseq="${ro_phyloseq:+${ro_phyloseq},}phyloseq/$(basename "$f")"
+done
+if [ -n "$ro_phyloseq" ]; then
+    params+=("phyloseq='$ro_phyloseq'")
 fi
-if [ -f ../../results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds ]; then
+ro_tse=""
+for f in ../../results/treesummarizedexperiment/*_TreeSummarizedExperiment.rds; do
+    [ -f "$f" ] || continue
     mkdir -p tse
-    cp ../../results/treesummarizedexperiment/dada2_TreeSummarizedExperiment.rds tse/
-    params+=("tse='tse/dada2_TreeSummarizedExperiment.rds'")
+    cp "$f" tse/
+    ro_tse="${ro_tse:+${ro_tse},}tse/$(basename "$f")"
+done
+if [ -n "$ro_tse" ]; then
+    params+=("tse='$ro_tse'")
 fi
 params_string=$(IFS=,; echo "${params[*]}")
 Rscript - <<REOF
@@ -2142,3 +2588,596 @@ conda = "envs/report.yaml"
 [rules.resources]
 threads = 2
 memory = "3G"
+
+# ------------------------------------------------------------------
+# R55  PPLACE_CLUSTALO_ALIGN  (nf-core/clustalo/align, clustalo branch)
+#      Align the ASV sequences (query) against the user-supplied
+#      reference alignment (profile1) with clustalo. Upstream
+#      FASTA_NEWICK_EPANG_GAPPA selects the alignmethod via
+#      params.pplace_alnmethod; the port implements the clustalo
+#      branch (mafft/hmmer variants excluded — see README).
+#      The empty fhmm/fhmm_batch inputs of upstream's CLUSTALO_ALIGN
+#      are dropped (no HMMER branch here), profile2 is unused.
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_clustalo_align"
+description = "Align ASVs against the reference alignment with clustalo (PPLACE placement input)"
+when = "config.pplace_tree != \"\""
+input = ["results/dada2/ASV_seqs.fasta", "{config.pplace_aln}"]
+output = ["intermediates/pplace/ASV.aln.fa.gz"]
+shell = '''
+mkdir -p work/pplace_clustalo_align intermediates/pplace
+cp {input[0]} work/pplace_clustalo_align/query.fasta
+cp {input[1]} work/pplace_clustalo_align/refseq.fasta
+cd work/pplace_clustalo_align
+clustalo -i query.fasta --profile1 refseq.fasta --threads={threads} --force -o >(pigz -cp {threads} > "$OLDPWD/intermediates/pplace/ASV.aln.fa.gz")
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/mulled-v2-4cefc38542f86c17596c29b35a059de10387c6a7:adbe4fbad680f9beb083956d79128039a727e7b3-0"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R56  PPLACE_EPANG_SPLIT  (nf-core/epang/split)
+#      Split the combined alignment into reference and query
+#      partitions for EPA-NG placement.
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_epang_split"
+description = "Split reference+query alignment for EPA-NG (PPLACE)"
+when = "config.pplace_tree != \"\""
+input = ["intermediates/pplace/ASV.aln.fa.gz", "{config.pplace_tree}"]
+output = [
+    "intermediates/pplace/split.query.fasta.gz",
+    "intermediates/pplace/split.reference.fasta.gz",
+]
+shell = '''
+mkdir -p work/pplace_epang_split intermediates/pplace
+cp {input[0]} work/pplace_epang_split/fullaln.fa.gz
+cp {input[1]} work/pplace_epang_split/refphylogeny.tree
+cd work/pplace_epang_split
+gzip -cd fullaln.fa.gz > fullaln.fa
+epa-ng --split fullaln.fa refphylogeny.tree
+gzip -c query.fasta > query.fasta.gz && rm query.fasta
+gzip -c reference.fasta > reference.fasta.gz && rm reference.fasta
+cp query.fasta.gz "$OLDPWD/intermediates/pplace/split.query.fasta.gz"
+cp reference.fasta.gz "$OLDPWD/intermediates/pplace/split.reference.fasta.gz"
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/epa-ng:0.3.8--h9a82719_1"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R57  PPLACE_EPANG_PLACE  (nf-core/epang/place)
+#      Place the query sequences onto the reference phylogeny with
+#      EPA-NG. --model is only passed when pplace_model is non-empty
+#      (upstream emits "${meta.model}" which is null for absent).
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_epang_place"
+description = "Phylogenetic placement of ASVs with EPA-NG (PPLACE)"
+when = "config.pplace_tree != \"\""
+input = [
+    "intermediates/pplace/split.query.fasta.gz",
+    "intermediates/pplace/split.reference.fasta.gz",
+    "{config.pplace_tree}",
+]
+output = [
+    "intermediates/pplace/ASV.epa_result.jplace.gz",
+    "intermediates/pplace/epa_info.log",
+]
+shell = '''
+mkdir -p work/pplace_epang_place intermediates/pplace
+cp {input[0]} work/pplace_epang_place/query.fasta.gz
+cp {input[1]} work/pplace_epang_place/reference.fasta.gz
+cp {input[2]} work/pplace_epang_place/referencetree.tree
+cd work/pplace_epang_place
+gzip -cd query.fasta.gz > query.fasta
+gzip -cd reference.fasta.gz > reference.fasta
+MODEL="{config.pplace_model}"
+epa-ng --threads {threads} ${MODEL:+--model $MODEL} --ref-msa reference.fasta --tree referencetree.tree --query query.fasta
+if [ -e epa_result.jplace ]; then gzip epa_result.jplace; fi
+if [ -e epa_result.jplace.gz ]; then cp epa_result.jplace.gz "$OLDPWD/intermediates/pplace/ASV.epa_result.jplace.gz"; fi
+if [ -e epa_info.log ]; then cp epa_info.log "$OLDPWD/intermediates/pplace/epa_info.log"; fi
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/epa-ng:0.3.8--h9a82719_1"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R58  PPLACE_GAPPA_GRAFT  (nf-core/gappa/examinegraft)
+#      Graft the EPA-NG placements onto the reference phylogeny.
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_gappa_graft"
+description = "Graft placements onto the reference phylogeny with gappa (PPLACE)"
+when = "config.pplace_tree != \"\""
+input = ["intermediates/pplace/ASV.epa_result.jplace.gz"]
+output = [
+    "intermediates/pplace/grafted.newick",
+]
+shell = '''
+mkdir -p work/pplace_gappa_graft intermediates/pplace
+cp {input[0]} work/pplace_gappa_graft/ASV.jplace.gz
+cd work/pplace_gappa_graft
+gappa examine graft --threads {threads} --file-prefix grafted. --jplace-path ASV.jplace.gz
+cp grafted.newick "$OLDPWD/intermediates/pplace/grafted.newick"
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/gappa:0.8.0--h9a82719_0"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R59  PPLACE_GAPPA_ASSIGN  (nf-core/gappa/examineassign)
+#      Assign taxonomy from the placements against the optional
+#      reference taxonomy (pplace_taxonomy). Gated on the key —
+#      upstream ext.when = { taxonomy }.
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_gappa_assign"
+description = "Assign taxonomy from placements with gappa (PPLACE, requires pplace_taxonomy)"
+when = "config.pplace_tree != \"\" && config.pplace_taxonomy != \"\""
+input = [
+    "intermediates/pplace/ASV.epa_result.jplace.gz",
+    "{config.pplace_taxonomy}",
+]
+output = [
+    "intermediates/pplace/assign.taxonomy.profile.tsv",
+    "intermediates/pplace/assign.taxonomy.labelled_tree.newick",
+    "intermediates/pplace/assign.taxonomy.per_query.tsv",
+    "intermediates/pplace/assign.taxonomy.krona.profile",
+    "intermediates/pplace/assign.taxonomy.sativa.tsv",
+]
+shell = '''
+mkdir -p work/pplace_gappa_assign intermediates/pplace
+cp {input[0]} work/pplace_gappa_assign/ASV.jplace.gz
+cp {input[1]} work/pplace_gappa_assign/taxonomy.tsv
+cd work/pplace_gappa_assign
+gappa examine assign --threads {threads} --jplace-path ASV.jplace.gz --taxon-file taxonomy.tsv --file-prefix assign. --per-query-results --krona --sativa
+cp assign.taxonomy.profile.tsv assign.taxonomy.labelled_tree.newick assign.taxonomy.per_query.tsv assign.taxonomy.krona.profile assign.taxonomy.sativa.tsv "$OLDPWD/intermediates/pplace/"
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/gappa:0.8.0--h9a82719_0"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R60  PPLACE_GAPPA_HEATTREE  (nf-core/gappa/examineheattree)
+#      Per-branch placement-abundance heat tree.
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_gappa_heattree"
+description = "Heat tree of placement abundances with gappa (PPLACE)"
+when = "config.pplace_tree != \"\""
+input = ["intermediates/pplace/ASV.epa_result.jplace.gz"]
+output = [
+    "intermediates/pplace/heattree.newick",
+    "intermediates/pplace/heattree.colours.txt",
+]
+shell = '''
+mkdir -p work/pplace_gappa_heattree intermediates/pplace
+cp {input[0]} work/pplace_gappa_heattree/ASV.jplace.gz
+cd work/pplace_gappa_heattree
+gappa examine heat-tree --threads {threads} --file-prefix heattree. --jplace-path ASV.jplace.gz --write-nexus-tree --write-phyloxml-tree --write-svg-tree --log-file heattree.log
+grep '^ *At' heattree.log > heattree.colours.txt
+cp heattree.newick heattree.colours.txt "$OLDPWD/intermediates/pplace/"
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/gappa:0.8.0--h9a82719_0"
+
+[rules.resources]
+threads = 2
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R61  PPLACE_FORMAT_TAX  (modules/local/format_pplacetax.nf)
+#      Pick the best placement per ASV from the gappa per-query
+#      taxonomy profile (R, extracted to scripts/format_pplacetax.R).
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_format_tax"
+description = "Format gappa per-query placements into a taxonomy table (PPLACE)"
+when = "config.pplace_tree != \"\" && config.pplace_taxonomy != \"\""
+input = ["intermediates/pplace/assign.taxonomy.per_query.tsv"]
+output = [
+    "intermediates/pplace/pplace_taxonomy.per_query_unique.tsv",
+    "results/pplace/{config.pplace_name}.taxonomy.tsv",
+]
+shell = '''
+mkdir -p work/pplace_format_tax results/pplace
+cp {input[0]} work/pplace_format_tax/tax.tsv
+cd work/pplace_format_tax
+NAME="{config.pplace_name}"
+Rscript ../../scripts/format_pplacetax.R ${NAME:-user_tree} tax.tsv
+cp ${NAME:-user_tree}.taxonomy.per_query_unique.tsv "$OLDPWD/intermediates/pplace/pplace_taxonomy.per_query_unique.tsv"
+cp ${NAME:-user_tree}.taxonomy.tsv "$OLDPWD/results/pplace/{config.pplace_name}.taxonomy.tsv"
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+conda = "envs/pplacetax.yaml"
+
+[rules.resources]
+threads = 2
+memory = "6G"
+
+# ------------------------------------------------------------------
+# R62  PPLACE_REFORMAT_TAX  (modules/local/phyloseq_intax.nf)
+#      Reformat the PPLACE taxonomy table for phyloseq
+#      (scripts/reformat_tax_for_phyloseq.py).
+# ------------------------------------------------------------------
+[[rules]]
+name = "pplace_reformat_tax"
+description = "Reformat the PPLACE taxonomy for phyloseq (PPLACE)"
+when = "config.pplace_tree != \"\" && config.pplace_taxonomy != \"\""
+input = ["results/pplace/{config.pplace_name}.taxonomy.tsv"]
+output = ["results/pplace/reformat_{config.pplace_name}.taxonomy.tsv"]
+shell = '''
+mkdir -p work/pplace_reformat_tax
+cp {input[0]} work/pplace_reformat_tax/tax.tsv
+cd work/pplace_reformat_tax
+python3 ../../scripts/reformat_tax_for_phyloseq.py tax.tsv reformat_tax.tsv
+cp reformat_tax.tsv "$OLDPWD/results/pplace/reformat_{config.pplace_name}.taxonomy.tsv"
+'''
+tags = ["pplace", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/pandas:1.1.5"
+
+[rules.resources]
+threads = 1
+memory = "1G"
+
+# ------------------------------------------------------------------
+# R63  KRAKEN2_DB_PREP  (upstream kraken2_taxonomy_wf db-branch)
+#      Validate + prepare the user kraken2 database: a .tar.gz/.tgz
+#      bundle is unpacked (upstream UNTAR), a directory is used as-is,
+#      anything else errors (upstream fails the channel with
+#      "neither a directory nor a file that ends in '.tar.gz'").
+# ------------------------------------------------------------------
+[[rules]]
+name = "kraken2_db_prep"
+description = "Prepare the kraken2 database (untar bundles, validate directories)"
+when = "config.kraken2_ref_tax_custom != \"\""
+input = ["{config.kraken2_ref_tax_custom}"]
+output = ["intermediates/kraken2/db.ready"]
+shell = '''
+mkdir -p work/kraken2_db_prep intermediates/kraken2
+DB="{config.kraken2_ref_tax_custom}"
+if [ -d "$DB" ]; then
+    cp -r "$DB"/. ./db/
+    DB="$PWD/db"
+elif [[ "$DB" == *.tar.gz || "$DB" == *.tgz ]]; then
+    tar xzf "$DB"
+    DB=$(basename "$DB" .tar.gz); DB=${DB%.tgz}
+    mkdir -p "$DB"
+    mv *.k2d "$DB" 2>/dev/null || echo "nothing to do"
+    DB="$PWD/$DB"
+else
+    echo "kraken2_ref_tax_custom is neither a directory nor a file that ends in '.tar.gz' or '.tgz'" >&2
+    exit 1
+fi
+echo "$DB" > db.ready
+cp db.ready "$OLDPWD/intermediates/kraken2/db.ready"
+'''
+tags = ["kraken2", "taxonomy"]
+
+[rules.environment]
+# Upstream untar env (coreutils/grep/gzip/lbzip2/sed/tar) — wave container
+# built from that env, matching the port's container-pinning convention
+# (quay mulled hash for this env is not verifiable).
+singularity = "docker://community.wave.seqera.io/library/coreutils_grep_gzip_lbzip2_pruned:838ba80435a629f8"
+
+[rules.resources]
+threads = 1
+memory = "2G"
+
+# ------------------------------------------------------------------
+# R64  KRAKEN2_CLASSIFY  (nf-core/kraken2/kraken2)
+#      Classify the ASV sequences against the kraken2 database.
+#      save_reads_assignment = true (upstream kraken2_taxonomy_wf).
+# ------------------------------------------------------------------
+[[rules]]
+name = "kraken2_classify"
+description = "Classify ASVs with kraken2 (alternative taxonomy branch)"
+when = "config.kraken2_ref_tax_custom != \"\""
+input = [
+    "results/dada2/ASV_seqs.fasta",
+    "intermediates/kraken2/db.ready",
+]
+output = [
+    "intermediates/kraken2/ASV_tax.kraken2.kraken2.report.txt",
+    "intermediates/kraken2/ASV_tax.kraken2.classifiedreads.txt",
+]
+shell = '''
+mkdir -p work/kraken2_classify intermediates/kraken2
+cp {input[0]} work/kraken2_classify/ASV_tax.fasta
+cd work/kraken2_classify
+DB=$(cat ../../intermediates/kraken2/db.ready)
+kraken2 --db "$DB" --threads {threads} --report ASV_tax.kraken2.report.txt --output ASV_tax.kraken2.classifiedreads.txt --use-names --confidence {config.kraken2_confidence} ASV_tax.fasta
+cp ASV_tax.kraken2.report.txt "$OLDPWD/intermediates/kraken2/ASV_tax.kraken2.kraken2.report.txt"
+cp ASV_tax.kraken2.classifiedreads.txt "$OLDPWD/intermediates/kraken2/ASV_tax.kraken2.classifiedreads.txt"
+'''
+tags = ["kraken2", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://community.wave.seqera.io/library/kraken2_coreutils_pigz:920ecc6b96e2ba71"
+
+[rules.resources]
+threads = 4
+memory = "8G"
+
+# ------------------------------------------------------------------
+# R65  KRAKEN2_FORMAT_TAXRESULTS  (modules/local/format_taxresults_kraken2.nf)
+#      Convert the kraken2 report + read-classification into per-ASV
+#      taxonomy tables (R, extracted to scripts/format_taxresults_kraken2.R).
+# ------------------------------------------------------------------
+[[rules]]
+name = "kraken2_format_taxresults"
+description = "Format kraken2 report+classification into per-ASV taxonomy tables"
+when = "config.kraken2_ref_tax_custom != \"\""
+input = [
+    "intermediates/kraken2/ASV_tax.kraken2.kraken2.report.txt",
+    "intermediates/kraken2/ASV_tax.kraken2.classifiedreads.txt",
+]
+output = [
+    "intermediates/kraken2/ASV_tax.kraken2.keys.tsv",
+    "intermediates/kraken2/ASV_tax.kraken2.complete.tsv",
+    "results/kraken2/ASV_tax.kraken2.tsv",
+    "results/kraken2/ASV_tax.kraken2.into-qiime2.tsv",
+]
+shell = '''
+mkdir -p work/kraken2_format_taxresults results/kraken2
+cp {input[0]} work/kraken2_format_taxresults/report.txt
+cp {input[1]} work/kraken2_format_taxresults/classifiedreads.txt
+cd work/kraken2_format_taxresults
+LEVELS="{config.kraken2_assign_taxlevels}"
+Rscript ../../scripts/format_taxresults_kraken2.R report.txt classifiedreads.txt ${LEVELS:-"D,P,C,O,F,G,S"}
+cp ASV_tax.kraken2.keys.tsv "$OLDPWD/intermediates/kraken2/ASV_tax.kraken2.keys.tsv"
+cp ASV_tax.kraken2.complete.tsv "$OLDPWD/intermediates/kraken2/ASV_tax.kraken2.complete.tsv"
+cp ASV_tax.kraken2.tsv "$OLDPWD/results/kraken2/ASV_tax.kraken2.tsv"
+cp ASV_tax.kraken2.into-qiime2.tsv "$OLDPWD/results/kraken2/ASV_tax.kraken2.into-qiime2.tsv"
+'''
+tags = ["kraken2", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/r-base:4.2.1"
+
+[rules.resources]
+threads = 2
+memory = "3G"
+
+# ------------------------------------------------------------------
+# R66  SINTAX_FORMAT_DB  (modules/local/format_taxonomy_sintax.nf,
+#      custom-reference branch)
+#      Validate + gzip the user SINTAX reference (idempotent: a file
+#      with the gzip magic bytes is copied as-is) and emit the
+#      reference-taxonomy info file. Named pre-built SINTAX databases
+#      (params.sintax_ref_databases) are excluded — see README.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sintax_format_db"
+description = "Prepare the user SINTAX reference database (gzip-validate + info file)"
+when = "config.sintax_ref_tax_custom != \"\""
+input = ["{config.sintax_ref_tax_custom}"]
+output = [
+    "intermediates/sintax/sintaxdb.fa.gz",
+    "intermediates/sintax/ref_taxonomy_sintax.txt",
+]
+shell = '''
+mkdir -p work/sintax_format_db intermediates/sintax
+cp {input[0]} work/sintax_format_db/database
+cd work/sintax_format_db
+set -- $(head -c2 database | od -An -t u1)
+if [ "$#" -ge 2 ] && [ "$1" = "31" ] && [ "$2" = "139" ]; then
+    cp -fL database sintaxdb.fa.gz
+else
+    gzip -c database > sintaxdb.fa.gz
+fi
+printf '%s\n' \
+    "--sintax_ref_tax_custom: {config.sintax_ref_tax_custom}" \
+    "Title: User-supplied SINTAX reference" \
+    "Citation: Not specified" \
+    "dbversion label: user_supplied" > ref_taxonomy_sintax.txt
+cp sintaxdb.fa.gz ref_taxonomy_sintax.txt "$OLDPWD/intermediates/sintax/"
+'''
+tags = ["sintax", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://docker.io/biocontainers/biocontainers:v1.2.0_cv1"
+
+[rules.resources]
+threads = 1
+memory = "2G"
+
+# ------------------------------------------------------------------
+# R67  SINTAX_CLASSIFY  (nf-core/vsearch/sintax)
+#      SINTAX taxonomy assignment of the ASVs with vsearch.
+# ------------------------------------------------------------------
+[[rules]]
+name = "sintax_classify"
+description = "SINTAX taxonomy assignment with vsearch (alternative taxonomy branch)"
+when = "config.sintax_ref_tax_custom != \"\""
+input = [
+    "results/dada2/ASV_seqs.fasta",
+    "intermediates/sintax/sintaxdb.fa.gz",
+]
+output = ["intermediates/sintax/ASV_tax.sintax.tsv"]
+shell = '''
+mkdir -p work/sintax_classify intermediates/sintax
+cp {input[0]} work/sintax_classify/ASV_tax.fasta
+cp {input[1]} work/sintax_classify/sintaxdb.fa.gz
+cd work/sintax_classify
+vsearch --sintax ASV_tax.fasta --db sintaxdb.fa.gz --threads {threads} --gzip_decompress --sintax_cutoff 0.8 --randseed {config.seed} --tabbedout ASV_tax.sintax.tsv
+cp ASV_tax.sintax.tsv "$OLDPWD/intermediates/sintax/ASV_tax.sintax.tsv"
+'''
+tags = ["sintax", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/vsearch:2.31.0--hd2be7a0_0"
+
+[rules.resources]
+threads = 1
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R68  SINTAX_FORMAT_TAX  (modules/local/format_taxonomy_sintax.nf
+#      consumer side: bin/convert_sintax_output.py)
+#      Convert the vsearch SINTAX tabbed output into a per-ASV
+#      taxonomy table (phases missing ranks with empty columns).
+# ------------------------------------------------------------------
+[[rules]]
+name = "sintax_format_tax"
+description = "Convert SINTAX tabbed output into a per-ASV taxonomy table"
+when = "config.sintax_ref_tax_custom != \"\""
+input = [
+    "intermediates/sintax/ASV_tax.sintax.tsv",
+    "results/dada2/ASV_seqs.fasta",
+]
+output = ["results/sintax/ASV_tax.sintax_format.tsv"]
+shell = '''
+mkdir -p work/sintax_format_tax results/sintax
+cp {input[0]} work/sintax_format_tax/sintax.tsv
+cp {input[1]} work/sintax_format_tax/ASV_tax.fasta
+cd work/sintax_format_tax
+LEVELS="{config.sintax_assign_taxlevels}"
+python3 ../../scripts/convert_sintax_output.py -i sintax.tsv -f ASV_tax.fasta -o sintax_format.tsv -t "${LEVELS:-Kingdom,Phylum,Class,Order,Family,Genus,Species}" -d user_supplied
+cp sintax_format.tsv "$OLDPWD/results/sintax/ASV_tax.sintax_format.tsv"
+'''
+tags = ["sintax", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://docker.io/biocontainers/biocontainers:v1.2.0_cv1"
+
+[rules.resources]
+threads = 1
+memory = "2G"
+
+# ------------------------------------------------------------------
+# R69  VSEARCH_LCA_FORMAT_DB  (modules/local/format_taxonomy_vsearch_lca.nf,
+#      custom-reference branch)
+#      Same gzip-validate as the SINTAX db, with the VSEARCH LCA
+#      reference-taxonomy info file.
+# ------------------------------------------------------------------
+[[rules]]
+name = "vsearch_lca_format_db"
+description = "Prepare the user VSEARCH LCA reference database (gzip-validate + info file)"
+when = "config.vsearch_lca_ref_tax_custom != \"\""
+input = ["{config.vsearch_lca_ref_tax_custom}"]
+output = [
+    "intermediates/vsearch_lca/sintaxdb.fa.gz",
+    "intermediates/vsearch_lca/ref_taxonomy_vsearch_lca.txt",
+]
+shell = '''
+mkdir -p work/vsearch_lca_format_db intermediates/vsearch_lca
+cp {input[0]} work/vsearch_lca_format_db/database
+cd work/vsearch_lca_format_db
+set -- $(head -c2 database | od -An -t u1)
+if [ "$#" -ge 2 ] && [ "$1" = "31" ] && [ "$2" = "139" ]; then
+    cp -fL database sintaxdb.fa.gz
+else
+    gzip -c database > sintaxdb.fa.gz
+fi
+printf '%s\n' \
+    "--vsearch_lca_ref_tax_custom: {config.vsearch_lca_ref_tax_custom}" \
+    "Title: User-supplied VSEARCH LCA reference" \
+    "Citation: Not specified" \
+    "dbversion label: user_supplied" > ref_taxonomy_vsearch_lca.txt
+cp sintaxdb.fa.gz ref_taxonomy_vsearch_lca.txt "$OLDPWD/intermediates/vsearch_lca/"
+'''
+tags = ["vsearch", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://docker.io/biocontainers/biocontainers:v1.2.0_cv1"
+
+[rules.resources]
+threads = 1
+memory = "2G"
+
+# ------------------------------------------------------------------
+# R70  VSEARCH_LCA_CLASSIFY  (nf-core/vsearch/usearchglobal, LCA mode)
+#      Global alignment against the reference with LCA taxonomy
+#      output (vsearch --usearch_global --lcaout).
+# ------------------------------------------------------------------
+[[rules]]
+name = "vsearch_lca_classify"
+description = "VSEARCH global-alignment LCA taxonomy assignment (alternative taxonomy branch)"
+when = "config.vsearch_lca_ref_tax_custom != \"\""
+input = [
+    "results/dada2/ASV_seqs.fasta",
+    "intermediates/vsearch_lca/sintaxdb.fa.gz",
+]
+output = ["intermediates/vsearch_lca/ASV_tax.lca"]
+shell = '''
+mkdir -p work/vsearch_lca_classify intermediates/vsearch_lca
+cp {input[0]} work/vsearch_lca_classify/ASV_tax.fasta
+cp {input[1]} work/vsearch_lca_classify/sintaxdb.fa.gz
+cd work/vsearch_lca_classify
+vsearch --usearch_global ASV_tax.fasta --db sintaxdb.fa.gz --id {config.vsearch_lca_id} --threads {threads} --gzip_decompress --top_hits_only --output_no_hits --maxaccepts {config.vsearch_lca_maxaccepts} --maxrejects {config.vsearch_lca_maxrejects} --lca_cutoff {config.vsearch_lca_lca_cutoff} --query_cov {config.vsearch_lca_query_cov} --n_mismatch --notrunclabels --lcaout ASV_tax.lca
+cp ASV_tax.lca "$OLDPWD/intermediates/vsearch_lca/ASV_tax.lca"
+'''
+tags = ["vsearch", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://quay.io/biocontainers/vsearch:2.31.0--hd2be7a0_0"
+
+[rules.resources]
+threads = 1
+memory = "4G"
+
+# ------------------------------------------------------------------
+# R71  VSEARCH_LCA_FORMAT_TAX  (bin/convert_vsearch_lca_output.py)
+#      Convert the vsearch --lcaout output into a per-ASV taxonomy
+#      table.
+# ------------------------------------------------------------------
+[[rules]]
+name = "vsearch_lca_format_tax"
+description = "Convert VSEARCH LCA output into a per-ASV taxonomy table"
+when = "config.vsearch_lca_ref_tax_custom != \"\""
+input = [
+    "intermediates/vsearch_lca/ASV_tax.lca",
+    "results/dada2/ASV_seqs.fasta",
+]
+output = ["results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv"]
+shell = '''
+mkdir -p work/vsearch_lca_format_tax results/vsearch_lca
+cp {input[0]} work/vsearch_lca_format_tax/lca.tsv
+cp {input[1]} work/vsearch_lca_format_tax/ASV_tax.fasta
+cd work/vsearch_lca_format_tax
+LEVELS="{config.vsearch_lca_assign_taxlevels}"
+python3 ../../scripts/convert_vsearch_lca_output.py -i lca.tsv -f ASV_tax.fasta -o vsearch_lca_format.tsv -t "${LEVELS:-Kingdom,Phylum,Class,Order,Family,Genus,Species}"
+cp vsearch_lca_format.tsv "$OLDPWD/results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv"
+'''
+tags = ["vsearch", "taxonomy"]
+
+[rules.environment]
+singularity = "docker://docker.io/biocontainers/biocontainers:v1.2.0_cv1"
+
+[rules.resources]
+threads = 1
+memory = "2G"
