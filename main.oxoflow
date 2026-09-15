@@ -2017,12 +2017,17 @@ expand_inputs = [
     { pattern = "results/fastqc/{sample}_2_fastqc.zip", variables = { sample = "config.samples_list" } },
     { pattern = "results/cutadapt/{sample}.trimmed.cutadapt.log", variables = { sample = "config.samples_list" } },
 ]
-output = ["results/multiqc/multiqc_report.html"]
+output = [
+    "results/multiqc/multiqc_report.html",
+    "results/multiqc/multiqc_data/",
+    "results/multiqc/multiqc_plots/",
+]
 shell = '''
 mkdir -p work/multiqc
 cp {input} work/multiqc/
 cd work/multiqc
 multiqc --force --config multiqc_config.yml .
+cp -r multiqc_data multiqc_plots "$OLDPWD/results/multiqc/"
 cp multiqc_report.html "$OLDPWD/results/multiqc/multiqc_report.html"
 '''
 tags = ["reporting"]
