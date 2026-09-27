@@ -929,7 +929,7 @@ done
 compgen -G "work/dada2_taxonomy/ASV_seqs_*.species.tsv" > /dev/null || { echo "ERROR: no work/dada2_taxonomy/ASV_seqs_*.species.tsv produced — addSpecies step failed"; exit 1; }
 head -1 work/dada2_taxonomy/ASV_seqs_1.ASV_tax.sbdi-gtdb_R11-RS232-1.tsv > {output[0]}
 for f in work/dada2_taxonomy/ASV_seqs_*.ASV_tax.sbdi-gtdb_R11-RS232-1.tsv; do tail -n +2 "$f"; done | sort >> {output[0]}
-head -1 work/dada2_taxonomy/ASV_seqs_1.species.tsv > {output[1]}
+head -1 work/dada2_taxonomy/ASV_seqs_1.ASV_tax.sbdi-gtdb_R11-RS232-1.species.tsv > {output[1]}
 for f in work/dada2_taxonomy/ASV_seqs_*.species.tsv; do tail -n +2 "$f"; done | sort >> {output[1]}
 printf 'assignTaxonomy\\tminBoot = {config.dada_min_boot},tryRC = {config.dada_taxonomy_rc}\\ntaxlevels\\tc("{config.dada_assign_taxlevels}")\\nseed\\t{config.seed}\\n' > {output[2]}
 printf 'addSpecies\\tn = 1e5,tryRC = {config.dada_taxonomy_rc}\\ntaxlevels\\tc("{config.dada_assign_taxlevels}")\\nseed\\t{config.seed}\\n' > {output[3]}
@@ -980,7 +980,7 @@ done
 compgen -G "work/dada2_taxonomy_its/ASV_ITS_seqs_*.species.tsv" > /dev/null || { echo "ERROR: no work/dada2_taxonomy_its/ASV_ITS_seqs_*.species.tsv produced — addSpecies step failed"; exit 1; }
 head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv > work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv
 for f in work/dada2_taxonomy_its/ASV_ITS_seqs_*.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv; do tail -n +2 "$f"; done | sort >> work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv
-head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.species.tsv > work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv
+head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.species.tsv > work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv
 for f in work/dada2_taxonomy_its/ASV_ITS_seqs_*.species.tsv; do tail -n +2 "$f"; done | sort >> work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv
 # Map the ITS-cut taxonomy back onto the full-length ASVs
 python3 scripts/add_full_sequence_to_taxfile.py work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv {input[1]} {output[0]}
