@@ -921,8 +921,12 @@ mkdir -p work/dada2_taxonomy
 awk 'BEGIN{n=0;c=0} /^>/{n++; if (n % {config.dada_assign_chunksize} == 1) {c++; if (file) close(file); file=sprintf("work/dada2_taxonomy/ASV_seqs_%d.fasta", c)}} {print > file}' {input[0]}
 for chunk in work/dada2_taxonomy/ASV_seqs_*.fasta; do
     Rscript scripts/dada2_assign_taxonomy.R "$chunk" {input[1]} ".ASV_tax.sbdi-gtdb_R11-RS232-1" "{config.dada_assign_taxlevels}" {config.seed} {threads} {config.dada_min_boot} {config.dada_taxonomy_rc} work/dada2_taxonomy
-    Rscript scripts/dada2_add_species.R "$(basename "$chunk" .fasta).ASV_tax.sbdi-gtdb_R11-RS232-1.rds" {input[2]} "{config.dada_assign_taxlevels}" {config.seed} {config.dada_addspecies_allowmultiple} {config.dada_taxonomy_rc} work/dada2_taxonomy
+    Rscript scripts/dada2_add_species.R "${chunk%.fasta}.ASV_tax.sbdi-gtdb_R11-RS232-1.rds" {input[2]} "{config.dada_assign_taxlevels}" {config.seed} {config.dada_addspecies_allowmultiple} {config.dada_taxonomy_rc} work/dada2_taxonomy
 done
+# Fail loudly if any chunk failed to emit its per-chunk species table
+# (add_species.R exits non-zero only when invoked with a resolvable path;
+# aggregation below would otherwise silently produce an empty table).
+compgen -G "work/dada2_taxonomy/ASV_seqs_*.species.tsv" > /dev/null || { echo "ERROR: no work/dada2_taxonomy/ASV_seqs_*.species.tsv produced — addSpecies step failed"; exit 1; }
 head -1 work/dada2_taxonomy/ASV_seqs_1.ASV_tax.sbdi-gtdb_R11-RS232-1.tsv > {output[0]}
 for f in work/dada2_taxonomy/ASV_seqs_*.ASV_tax.sbdi-gtdb_R11-RS232-1.tsv; do tail -n +2 "$f"; done | sort >> {output[0]}
 head -1 work/dada2_taxonomy/ASV_seqs_1.species.tsv > {output[1]}
@@ -970,8 +974,10 @@ mkdir -p work/dada2_taxonomy_its
 awk 'BEGIN{n=0;c=0} /^>/{n++; if (n % {config.dada_assign_chunksize} == 1) {c++; if (file) close(file); file=sprintf("work/dada2_taxonomy_its/ASV_ITS_seqs_%d.fasta", c)}} {print > file}' {input[0]}
 for chunk in work/dada2_taxonomy_its/ASV_ITS_seqs_*.fasta; do
     Rscript scripts/dada2_assign_taxonomy.R "$chunk" {input[2]} ".ASV_ITS_tax.sbdi-gtdb_R11-RS232-1" "{config.dada_assign_taxlevels}" {config.seed} {threads} {config.dada_min_boot} {config.dada_taxonomy_rc} work/dada2_taxonomy_its
-    Rscript scripts/dada2_add_species.R "$(basename "$chunk" .fasta).ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.rds" {input[3]} "{config.dada_assign_taxlevels}" {config.seed} {config.dada_addspecies_allowmultiple} {config.dada_taxonomy_rc} work/dada2_taxonomy_its
+    Rscript scripts/dada2_add_species.R "${chunk%.fasta}.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.rds" {input[3]} "{config.dada_assign_taxlevels}" {config.seed} {config.dada_addspecies_allowmultiple} {config.dada_taxonomy_rc} work/dada2_taxonomy_its
 done
+# Fail loudly if any chunk failed to emit its per-chunk species table
+compgen -G "work/dada2_taxonomy_its/ASV_ITS_seqs_*.species.tsv" > /dev/null || { echo "ERROR: no work/dada2_taxonomy_its/ASV_ITS_seqs_*.species.tsv produced — addSpecies step failed"; exit 1; }
 head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv > work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv
 for f in work/dada2_taxonomy_its/ASV_ITS_seqs_*.ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv; do tail -n +2 "$f"; done | sort >> work/dada2_taxonomy_its/ASV_ITS_tax.sbdi-gtdb_R11-RS232-1.tsv
 head -1 work/dada2_taxonomy_its/ASV_ITS_seqs_1.species.tsv > work/dada2_taxonomy_its/ASV_ITS_tax_species.sbdi-gtdb_R11-RS232-1.tsv
