@@ -2,6 +2,7 @@
 # Verbatim from nf-core/ampliseq 2.18.0 bin/cutadapt_summary.py
 
 # --- Import libraries, do initializations  ---#
+import os
 import re, sys
 from sys import argv
 
@@ -43,7 +44,9 @@ for FILE in argv[2:]:
                 results.append("")
 
         # modify sample names (all before ".")
-        results[0] = results[0].split(".", 1)[0]
+        # keep only the basename first: paths like "work/cutadapt/S1.basic_1.fastq.gz"
+        # must yield the same key as merge_stats.R's sample names ("S1")
+        results[0] = os.path.basename(results[0]).split(".", 1)[0]
 
         # output per file
         print("\t".join(results))
