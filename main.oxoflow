@@ -844,8 +844,22 @@ output = [
 ]
 shell = '''
 mkdir -p intermediates/dada2/db
-curl -fsSL -o {output[0]} $(echo {config.dada_ref_taxonomy_urls} | cut -d, -f1)
-curl -fsSL -o {output[1]} $(echo {config.dada_ref_taxonomy_urls} | cut -d, -f2)
+# Resumable retry loop (pattern from rnaseq-star-deseq2 get_genome): a
+# bare `curl -fsSL` loses all progress on any transient timeout and the
+# SBDI-GTDB archives are ~25-30MB each. `-C -` resumes partial files
+# across retries so long downloads converge.
+url1=$(echo {config.dada_ref_taxonomy_urls} | cut -d, -f1)
+url2=$(echo {config.dada_ref_taxonomy_urls} | cut -d, -f2)
+for i in $(seq 1 20); do
+    curl -fsSL -C - --connect-timeout 30 -o {output[0]} "$url1" && break
+    echo "retry $i: assignTaxonomy DB download failed, resuming" >&2; sleep 5
+done
+[ -s {output[0]} ] || { echo "ERROR: taxonomy genus DB download failed after retries"; exit 1; }
+for i in $(seq 1 20); do
+    curl -fsSL -C - --connect-timeout 30 -o {output[1]} "$url2" && break
+    echo "retry $i: addSpecies DB download failed, resuming" >&2; sleep 5
+done
+[ -s {output[1]} ] || { echo "ERROR: taxonomy species DB download failed after retries"; exit 1; }
 '''
 tags = ["reference"]
 
