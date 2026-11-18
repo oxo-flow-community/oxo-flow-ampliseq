@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
-# Port of nf-core/ampliseq 2.18.0
-# modules/local/treesummarizedexperiment.nf inline R. The upstream script
+# Port of nf-core/ampliseq 3.1.0
+# modules/local/treesummarizedexperiment/main.nf inline R. The upstream script
 # body is kept verbatim; the nf-core templated paths ($otu_tsv, $tax_tsv,
 # $sam_tsv, $tree, $prefix) become positional argv so the oxo-flow port can
 # invoke it as:
@@ -24,9 +24,12 @@ suppressPackageStartupMessages(library(TreeSummarizedExperiment))
 # represent taxa and columns samples.
 otu_mat  <- read.table(otu_tsv, sep="\t", header=TRUE, row.names=1)
 otu_mat <- as.matrix(otu_mat)
+storage.mode(otu_mat) <- "integer"   # upstream 3.1.0 #1038
 assays <- SimpleList(counts = otu_mat)
 # Read taxonomy table. Correct format for it is DataFrame.
-taxonomy_table  <- read.table(tax_tsv, sep="\t", header=TRUE, row.names=1)
+taxonomy_table  <- read.table(tax_tsv, sep="\t", header=TRUE, row.names=1, comment.char = "")
+# upstream 3.1.0 #1042: per-rank confidences and the source classifier and database are not ranks
+taxonomy_table  <- taxonomy_table[, !grepl("_confidence$", colnames(taxonomy_table)) & !colnames(taxonomy_table) %in% c("classifier", "database"), drop=FALSE]
 taxonomy_table <- DataFrame(taxonomy_table)
 
 # Match rownames between taxonomy table and abundance matrix.

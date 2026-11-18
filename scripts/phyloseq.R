@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Port of nf-core/ampliseq 2.18.0 modules/local/phyloseq.nf inline R.
+# Port of nf-core/ampliseq 3.1.0 modules/local/phyloseq/main.nf inline R.
 # The upstream script body is kept verbatim; the nf-core templated paths
 # ($otu_tsv, $tax_tsv, $sam_tsv, $tree, $prefix) become positional argv so
 # the oxo-flow port can invoke it as:
@@ -20,8 +20,12 @@ tree     <- args[5]
 suppressPackageStartupMessages(library(phyloseq))
 
 otu_df  <- read.table(otu_tsv, sep="\t", header=TRUE, row.names=1)
-tax_df  <- read.table(tax_tsv, sep="\t", header=TRUE, row.names=1)
+tax_df  <- read.table(tax_tsv, sep="\t", header=TRUE, row.names=1, comment.char = "")
+# upstream 3.1.0 #1042: per-rank confidences and the source classifier and database
+# are not ranks, and phyloseq treats every column as one
+tax_df  <- tax_df[, !grepl("_confidence$", colnames(tax_df)) & !colnames(tax_df) %in% c("classifier", "database"), drop=FALSE]
 otu_mat <- as.matrix(otu_df)
+storage.mode(otu_mat) <- "integer"   # upstream 3.1.0 #1038
 tax_mat <- as.matrix(tax_df)
 
 OTU     <- otu_table(otu_mat, taxa_are_rows=TRUE)

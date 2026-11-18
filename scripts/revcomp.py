@@ -3,7 +3,7 @@
 
 Port of the upstream makeComplement function
 (subworkflows/local/utils_nfcore_ampliseq_pipeline/main.nf:435)
-used for the illumina_pe_its read-through cutadapt pass
+used for the illumina_pe_readthrough read-through cutadapt pass
 (CUTADAPT_READTHROUGH: -a rv_primer_revcomp -A fw_primer_revcomp).
 
 Usage: python3 revcomp.py <primer_sequence>
