@@ -11,10 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install oxo-flow (latest release tarball)
+      - name: Install oxo-flow (pinned release tarball)
+        # Pinned for deterministic CI (was: floating releases/latest tarball,
+        # which re-resolves on every run; the last green run installed 0.21.1
+        # through that floating path — see job log 110723909585). v0.21.1 is
+        # therefore the last release this suite was actually validated against.
+        # Newer releases were tested locally against the unchanged workflow and
+        # fail plan-time with "scatter rule 'sidle_trim' has an empty value
+        # domain for 'region'" (v0.30.1 and v0.31.0, both 2026-11), an
+        # engine-side strictness bump this port tracks separately rather than
+        # silently absorbing into CI. Asset URL / state:uploaded verified via
+        # the releases API.
         run: |
           curl -fL -o oxo-flow.tar.gz \
-            https://github.com/Traitome/oxo-flow/releases/latest/download/oxo-flow-latest-x86_64-unknown-linux-gnu.tar.gz
+            https://github.com/Traitome/oxo-flow/releases/download/v0.21.1/oxo-flow-v0.21.1-x86_64-unknown-linux-gnu.tar.gz
           tar xzf oxo-flow.tar.gz
           sudo mv oxo-flow /usr/local/bin/
           oxo-flow --version

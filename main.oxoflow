@@ -1,9 +1,9 @@
 # ================================================================
 # oxo-flow-ampliseq — amplicon sequencing (16S/ITS) analysis
 #
-# oxo-flow port of nf-core/ampliseq 2.18.0
-#   upstream: https://github.com/nf-core/ampliseq (tag 2.18.0,
-#   sha 2723d4c298d48321594920d0324697e14d73ee94, MIT license)
+# oxo-flow port of nf-core/ampliseq 3.1.0
+#   upstream: https://github.com/nf-core/ampliseq (tag 3.1.0,
+#   sha b9bd579c0480ee23ecf24655f51c0c67777cd6b3, MIT license)
 #
 # Ported default-parameters main path:
 #   RENAME_RAW_DATA_FILES -> FASTQC -> CUTADAPT -> DADA2 (quality,
@@ -19,15 +19,15 @@
 [workflow]
 name = "oxo-flow-ampliseq"
 version = "0.1.0"
-description = "Amplicon sequencing (16S/ITS) analysis with DADA2 and QIIME2 barplots — oxo-flow port of nf-core/ampliseq 2.18.0 (default path: FastQC -> cutadapt -> DADA2 denoise -> DADA2 taxonomy -> QIIME2 barplot -> MultiQC)"
+description = "Amplicon sequencing (16S/ITS) analysis with DADA2 and QIIME2 barplots — oxo-flow port of nf-core/ampliseq 3.1.0 (default path: FastQC -> cutadapt -> DADA2 denoise -> DADA2 taxonomy -> QIIME2 barplot -> MultiQC)"
 author = "oxo-flow-community"
 sample_groups_file = "test/fixtures/groups.tsv"
 
 [config]
 # --- primers (upstream default null renders literal "null" adapters;
 #     port uses empty strings — see README fidelity table) ---
-FW_primer = ""
-RV_primer = ""
+primer_fwd = ""
+primer_rev = ""
 # --- cutadapt ---
 cutadapt_min_overlap = 3
 cutadapt_max_error_rate = 0.1
@@ -40,7 +40,7 @@ min_len = 50
 max_len = "Inf"
 max_ee = 2
 seed = 100
-sample_inference = "independent"   # "independent" | "pooled" | "pseudo"
+sample_inference = "pooled"   # "independent" | "pooled" | "pseudo"; upstream default flipped independent->pooled in 3.0.0 (#1027)
 mergepairs_strategy = "merge"      # "merge" | "consensus" | "concatenate"
 # --- DADA2 taxonomy assignment ---
 dada_min_boot = 50
@@ -73,9 +73,9 @@ skip_dada_taxonomy = false
 # port gates it (default false) so a fresh clone completes the DADA2
 # analysis without the container. Set true (with the disk) to enable.
 run_qiime2 = false
-# --- ITS branch (upstream params.illumina_pe_its / cut_its /
+# --- ITS branch (upstream params.illumina_pe_readthrough / cut_its /
 #     its_partial / its_extractor — all default off -> 16S path) ---
-illumina_pe_its = false   # fungal ITS long reads: skip quality-based
+illumina_pe_readthrough = false   # fungal ITS long reads: skip quality-based
                           # truncation (truncLen=0) + a second cutadapt
                           # read-through pass removing revcomp primers
 cut_its = "none"          # "none" | "full" | "its1" | "its2"
@@ -103,13 +103,14 @@ ancombc2_formula = ""
 ancombc_effect_size = 1
 ancombc_significance = 0.05
 # --- QIIME2 taxonomy classifier (upstream params.qiime_ref_taxonomy /
-#     params.classifier — off by default; DADA2 taxonomy is the
+#     params.qiime_classifier (3.1.0 rename of params.classifier) — off by
+#     default; DADA2 taxonomy is the
 #     default path). qiime_ref_taxonomy trains a Naive-Bayes
 #     classifier on the primer-extracted reference below; classifier
 #     is a path to a pre-trained .qza (skips training). ---
 qiime_ref_taxonomy = ""
 qiime_ref_taxonomy_urls = "https://data.qiime2.org/2023.7/common/silva-138-99-seqs.qza,https://data.qiime2.org/2023.7/common/silva-138-99-tax.qza"
-classifier = ""
+qiime_classifier = ""
 # --- picrust (upstream params.picrust, default false) ---
 picrust = false
 # --- sbdiexport (upstream params.sbdiexport, default false) ---
@@ -127,6 +128,7 @@ skip_report = true
 #     default, each gated on its *_ref_tax_custom / pplace_tree key) ---
 kraken2_ref_tax_custom = ""    # kraken2 db directory or .tar.gz bundle
 sintax_ref_tax_custom = ""     # FASTA with SINTAX-formatted headers (plain or gzipped)
+sintax_cutoff = 0.8              # SINTAX classification confidence cutoff (upstream --sintax_cutoff, #1066; default 0.8)
 vsearch_lca_ref_tax_custom = ""  # FASTA with taxonomy headers (plain or gzipped)
 kraken2_confidence = 0.0       # upstream params.kraken2_confidence
 kraken2_assign_taxlevels = ""  # upstream default "D,P,C,O,F,G,S" (used when empty)
@@ -242,8 +244,8 @@ output = [
 ]
 shell = """
 args=""
-[ -n "{config.FW_primer}" ] && args="$args -g {config.FW_primer}"
-[ -n "{config.RV_primer}" ] && args="$args -G {config.RV_primer}"
+[ -n "{config.primer_fwd}" ] && args="$args -g {config.primer_fwd}"
+[ -n "{config.primer_rev}" ] && args="$args -G {config.primer_rev}"
 # With no primers configured there is nothing to trim, so nothing may be
 # discarded (live: empty-primer default + unconditional --discard-untrimmed
 # emptied the fixture — 20-byte gzips, DADA2 saw zero reads).
@@ -252,13 +254,13 @@ DISCARD=""
 mkdir -p work/cutadapt
 # basic pass (upstream CUTADAPT_BASIC); outputs land in the shared workdir
 cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} $args $DISCARD -o work/cutadapt/{sample}.basic_1.fastq.gz -p work/cutadapt/{sample}.basic_2.fastq.gz {input[0]} {input[1]} > {output[2]}
-# illumina_pe_its: second read-through pass removes the reverse-complement
+# illumina_pe_readthrough: second read-through pass removes the reverse-complement
 # primers from the trimmed reads (upstream CUTADAPT_READTHROUGH,
-# ext.args -a rv_primer_revcomp -A fw_primer_revcomp); DADA2 then runs
+# ext.args -a primer_rev_revcomp -A primer_fwd_revcomp); DADA2 then runs
 # with truncLen=0 (no quality-based truncation for long ITS reads).
-if [ "{config.illumina_pe_its}" = "true" ]; then
-    RV_REVCOMP=$(python3 scripts/revcomp.py {config.RV_primer})
-    FW_REVCOMP=$(python3 scripts/revcomp.py {config.FW_primer})
+if [ "{config.illumina_pe_readthrough}" = "true" ]; then
+    RV_REVCOMP=$(python3 scripts/revcomp.py {config.primer_rev})
+    FW_REVCOMP=$(python3 scripts/revcomp.py {config.primer_fwd})
     cutadapt --cores {threads} --minimum-length 1 -O {config.cutadapt_min_overlap} -e {config.cutadapt_max_error_rate} -a "$RV_REVCOMP" -A "$FW_REVCOMP" -o {output[0]} -p {output[1]} work/cutadapt/{sample}.basic_1.fastq.gz work/cutadapt/{sample}.basic_2.fastq.gz >> {output[2]}
 else
     mv work/cutadapt/{sample}.basic_1.fastq.gz {output[0]}
@@ -371,7 +373,7 @@ memory = "3G"
 [[rules]]
 name = "trunclen_fw"
 description = "Find truncation length for forward reads"
-when = "!config.illumina_pe_its"
+when = "!config.illumina_pe_readthrough"
 input = ["intermediates/dada2/QC/FW_qual_stats.tsv"]
 output = ["intermediates/dada2/trunclenf.txt"]
 shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trunc_rmin} > {output[0]}"
@@ -387,7 +389,7 @@ memory = "1G"
 [[rules]]
 name = "trunclen_rv"
 description = "Find truncation length for reverse reads"
-when = "!config.illumina_pe_its"
+when = "!config.illumina_pe_readthrough"
 input = ["intermediates/dada2/QC/RV_qual_stats.tsv"]
 output = ["intermediates/dada2/trunclenr.txt"]
 shell = "python3 scripts/trunclen.py {input[0]} {config.trunc_qmin} {config.trunc_rmin} > {output[0]}"
@@ -425,9 +427,9 @@ output = [
 shell = '''
 TRUNCLENF=$(cat intermediates/dada2/trunclenf.txt)
 TRUNCLENR=$(cat intermediates/dada2/trunclenr.txt)
-# illumina_pe_its: no quality-based truncation (upstream sets
+# illumina_pe_readthrough: no quality-based truncation (upstream sets
 # trunclenf/trunclenr to 0 and skips TRUNCLEN entirely)
-if [ "{config.illumina_pe_its}" = "true" ]; then
+if [ "{config.illumina_pe_readthrough}" = "true" ]; then
     TRUNCLENF=0
     TRUNCLENR=0
 fi
@@ -698,7 +700,7 @@ memory = "6G"
 
 # ------------------------------------------------------------------
 # R19  ITSXRUST_CUTASV  (process_medium,
-#      quay.io/biocontainers/itsxrust:0.2.2--hdd79491_1)
+#      quay.io/biocontainers/itsxrust:0.3.0--h70df5c0_0)
 #      Same role as itsx_cutasv with the faster Rust implementation;
 #      produces ITS1/ITS2/full files named like ITSx's and a
 #      ITSx-compatible summary from the QC JSON.
@@ -766,7 +768,7 @@ echo -e "ITSxRust\t" > {output[2]}
 '''
 
 [rules.environment]
-singularity = "docker://quay.io/biocontainers/itsxrust:0.2.2--hdd79491_1"
+singularity = "docker://quay.io/biocontainers/itsxrust:0.3.0--h70df5c0_0"
 
 [rules.resources]
 threads = 6
@@ -1110,7 +1112,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax"
 description = "Import DADA2 taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\" && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.sidle_ref_tax_custom == \"\""
+when = "!config.skip_qiime && !config.skip_taxonomy && !config.skip_dada_taxonomy && config.run_qiime2 && config.qiime_ref_taxonomy == \"\" && config.qiime_classifier == \"\" && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.sidle_ref_tax_custom == \"\""
 input = ["results/dada2/ASV_tax_species.sbdi-gtdb_R11-RS232-1.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1207,7 +1209,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_intax_vsearch_lca"
 description = "Import VSEARCH LCA taxonomy into QIIME2 FeatureData[Taxonomy]"
-when = "config.vsearch_lca_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.qiime_ref_taxonomy == \"\" && config.classifier == \"\" && config.sidle_ref_tax_custom == \"\""
+when = "config.vsearch_lca_ref_tax_custom != \"\" && config.run_qiime2 && !config.skip_qiime && !config.skip_taxonomy && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.qiime_ref_taxonomy == \"\" && config.qiime_classifier == \"\" && config.sidle_ref_tax_custom == \"\""
 input = ["results/vsearch_lca/ASV_tax.vsearch_lca_format.tsv"]
 output = ["intermediates/qiime2/taxonomy.qza"]
 shell = '''
@@ -1229,7 +1231,7 @@ memory = "3G"
 [[rules]]
 name = "qiime2_barplot"
 description = "QIIME2 taxa barplot visualization and export"
-when = "!config.skip_qiime && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\" || config.sidle_ref_tax_custom != \"\") && !config.skip_barplot && config.run_qiime2"
+when = "!config.skip_qiime && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.qiime_classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\" || config.sidle_ref_tax_custom != \"\") && !config.skip_barplot && config.run_qiime2"
 input = ["{config.metadata_file}", "intermediates/qiime2/table.qza", "intermediates/qiime2/taxonomy.qza"]
 output = [
     "results/qiime2/barplot/index.html",
@@ -1949,12 +1951,12 @@ time_limit = "24h"
 # qiime2_train.nf): download the SILVA qza reference pair, reformat to
 # silva.fna/silva.tax (taxref_reformat_qiime_silva138.sh), import,
 # extract primer regions with the configured primers and train a
-# Naive-Bayes classifier. Requires FW_primer/RV_primer (like
+# Naive-Bayes classifier. Requires primer_fwd/primer_rev (like
 # upstream: extract-reads with empty primers fails in QIIME2).
 [[rules]]
 name = "qiime2_preptax"
 description = "Train a QIIME2 Naive-Bayes classifier from the SILVA reference"
-when = "config.run_qiime2 && !config.skip_taxonomy && config.qiime_ref_taxonomy != \"\" && config.classifier == \"\""
+when = "config.run_qiime2 && !config.skip_taxonomy && config.qiime_ref_taxonomy != \"\" && config.qiime_classifier == \"\""
 input = []
 output = ["intermediates/qiime2/classifier.qza"]
 shell = '''
@@ -1968,7 +1970,7 @@ curl -fsSL -o ref_tax.qza $(echo {config.qiime_ref_taxonomy_urls} | cut -d, -f2)
 sh ../../scripts/taxref_reformat_qiime_silva138.sh
 qiime tools import --type 'FeatureData[Sequence]' --input-path silva.fna --output-path ref-seq.qza
 qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path silva.tax --output-path ref-taxonomy.qza
-qiime feature-classifier extract-reads --p-n-jobs {threads} --i-sequences ref-seq.qza --p-f-primer {config.FW_primer} --p-r-primer {config.RV_primer} --o-reads ref-seq-extracted.qza --quiet
+qiime feature-classifier extract-reads --p-n-jobs {threads} --i-sequences ref-seq.qza --p-f-primer {config.primer_fwd} --p-r-primer {config.primer_rev} --o-reads ref-seq-extracted.qza --quiet
 qiime feature-classifier fit-classifier-naive-bayes --i-reference-reads ref-seq-extracted.qza --i-reference-taxonomy ref-taxonomy.qza --o-classifier "$OLDPWD/intermediates/qiime2/classifier.qza" --quiet
 '''
 tags = ["qiime2", "taxonomy"]
@@ -1983,7 +1985,7 @@ time_limit = "24h"
 
 # QIIME2_CLASSIFY (qiime2_classify.nf): classify-sklearn with the
 # trained classifier (or a user-supplied pre-trained one via
-# config.classifier — copied in-shell to the same intermediate path),
+# config.qiime_classifier — copied in-shell to the same intermediate path),
 # then tabulate + export. The taxonomy.qza lands at the same path the
 # qiime2_intax rule writes, so qiime2_barplot / exports consume
 # whichever taxonomy was produced (the two rules are mutually
@@ -1991,7 +1993,7 @@ time_limit = "24h"
 [[rules]]
 name = "qiime2_classify"
 description = "Classify ASVs with a trained QIIME2 classifier"
-when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.classifier != \"\") && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.sidle_ref_tax_custom == \"\""
+when = "config.run_qiime2 && !config.skip_taxonomy && (config.qiime_ref_taxonomy != \"\" || config.qiime_classifier != \"\") && (config.pplace_tree == \"\" || config.pplace_taxonomy == \"\") && config.skip_dada_taxonomy && config.sintax_ref_tax_custom == \"\" && config.kraken2_ref_tax_custom == \"\" && config.sidle_ref_tax_custom == \"\""
 input = ["intermediates/qiime2/rep-seqs.qza", "intermediates/qiime2/classifier.qza"]
 output = [
     "intermediates/qiime2/taxonomy.qza",
@@ -2003,8 +2005,8 @@ export MPLCONFIGDIR="work/qiime2_classify/mplconfigdir"
 export NUMBA_CACHE_DIR="work/qiime2_classify/numbacache"
 mkdir -p work/qiime2_classify results/qiime2/taxonomy
 # user-supplied pre-trained classifier (skips qiime2_preptax training)
-if [ -n "{config.classifier}" ] && [ ! -f intermediates/qiime2/classifier.qza ]; then
-    cp {config.classifier} intermediates/qiime2/classifier.qza
+if [ -n "{config.qiime_classifier}" ] && [ ! -f intermediates/qiime2/classifier.qza ]; then
+    cp {config.qiime_classifier} intermediates/qiime2/classifier.qza
 fi
 qiime feature-classifier classify-sklearn --i-classifier intermediates/qiime2/classifier.qza --p-n-jobs {threads} --i-reads {input[0]} --o-classification work/qiime2_classify/taxonomy.qza --verbose
 qiime metadata tabulate --m-input-file work/qiime2_classify/taxonomy.qza --o-visualization work/qiime2_classify/taxonomy.qzv --verbose
@@ -2130,7 +2132,7 @@ cp {input[0]} work/sbdiexport/ASV_table.tsv
 cp {input[1]} work/sbdiexport/ASV_tax_species.tsv
 cp {input[2]} work/sbdiexport/metadata.tsv
 cd work/sbdiexport
-Rscript ../../scripts/sbdiexport.R paired "{config.FW_primer}" "{config.RV_primer}" ASV_table.tsv ASV_tax_species.tsv metadata.tsv
+Rscript ../../scripts/sbdiexport.R paired "{config.primer_fwd}" "{config.primer_rev}" ASV_table.tsv ASV_tax_species.tsv metadata.tsv
 cp event.tsv dna.tsv emof.tsv asv-table.tsv "$OLDPWD/results/SBDI/"
 '''
 tags = ["export"]
@@ -2156,7 +2158,7 @@ shell = '''
 mkdir -p work/sbdiexportreannotate results/SBDI
 cp {input[0]} work/sbdiexportreannotate/ASV_tax_species.tsv
 cd work/sbdiexportreannotate
-Rscript ../../scripts/sbdiexportreannotate.R "{config.dada_ref_taxonomy_dbversion}" ASV_tax_species.tsv dada2 "v2.18.0" "{config.cut_its}"
+Rscript ../../scripts/sbdiexportreannotate.R "{config.dada_ref_taxonomy_dbversion}" ASV_tax_species.tsv dada2 "v3.1.0" "{config.cut_its}"
 cp annotation.tsv "$OLDPWD/results/SBDI/annotation.tsv"
 '''
 tags = ["export"]
@@ -2514,7 +2516,7 @@ memory = "3G"
 [[rules]]
 name = "summary_report"
 description = "Rmd summary report over QC, DADA2, taxonomy, SBDI and R-object results"
-when = "!config.skip_report && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\")"
+when = "!config.skip_report && !config.skip_taxonomy && (!config.skip_dada_taxonomy || (config.pplace_tree != \"\" && config.pplace_taxonomy != \"\") || config.sintax_ref_tax_custom != \"\" || config.kraken2_ref_tax_custom != \"\" || config.qiime_ref_taxonomy != \"\" || config.qiime_classifier != \"\" || config.vsearch_lca_ref_tax_custom != \"\")"
 input = [
     "assets/report_template.Rmd",
     "assets/nf-core_style.css",
@@ -2562,7 +2564,7 @@ TRUNCLENR=$(cat ../../intermediates/dada2/trunclenr.txt 2>/dev/null || echo 'nul
 params=()
 params+=("css='nf-core_style.css'")
 params+=("report_logo='nf-core-ampliseq_logo_light_long.png'")
-params+=("workflow_manifest_version='2.18.0'")
+params+=("workflow_manifest_version='3.1.0'")
 params+=("metadata='metadata.tsv'")
 params+=("cutadapt_summary='cutadapt_summary.tsv'")
 params+=("truncq={config.truncq}")
@@ -2655,7 +2657,7 @@ mkdir -p work/pplace_clustalo_align intermediates/pplace
 cp {input[0]} work/pplace_clustalo_align/query.fasta
 cp {input[1]} work/pplace_clustalo_align/refseq.fasta
 cd work/pplace_clustalo_align
-clustalo -i query.fasta --profile1 refseq.fasta --threads={threads} --force -o >(pigz -cp {threads} > "$OLDPWD/intermediates/pplace/ASV.aln.fa.gz")
+clustalo -i query.fasta --profile1 refseq.fasta --threads={threads} --force -o >(pigz -cp {threads} > "$OLDPWD/intermediates/pplace/ASV.aln.fa.gz") && wait $!
 '''
 tags = ["pplace", "taxonomy"]
 
@@ -2765,7 +2767,7 @@ cp grafted.newick "$OLDPWD/intermediates/pplace/grafted.newick"
 tags = ["pplace", "taxonomy"]
 
 [rules.environment]
-singularity = "docker://quay.io/biocontainers/gappa:0.8.0--h9a82719_0"
+singularity = "docker://quay.io/biocontainers/gappa:0.9.0--h077b44d_0"
 
 [rules.resources]
 threads = 2
@@ -2803,7 +2805,7 @@ cp assign.taxonomy.profile.tsv assign.taxonomy.labelled_tree.newick assign.taxon
 tags = ["pplace", "taxonomy"]
 
 [rules.environment]
-singularity = "docker://quay.io/biocontainers/gappa:0.8.0--h9a82719_0"
+singularity = "docker://quay.io/biocontainers/gappa:0.9.0--h077b44d_0"
 
 [rules.resources]
 threads = 2
@@ -2833,7 +2835,7 @@ cp heattree.newick heattree.colours.txt "$OLDPWD/intermediates/pplace/"
 tags = ["pplace", "taxonomy"]
 
 [rules.environment]
-singularity = "docker://quay.io/biocontainers/gappa:0.8.0--h9a82719_0"
+singularity = "docker://quay.io/biocontainers/gappa:0.9.0--h077b44d_0"
 
 [rules.resources]
 threads = 2
@@ -3078,7 +3080,7 @@ mkdir -p work/sintax_classify intermediates/sintax
 cp {input[0]} work/sintax_classify/ASV_tax.fasta
 cp {input[1]} work/sintax_classify/sintaxdb.fa.gz
 cd work/sintax_classify
-vsearch --sintax ASV_tax.fasta --db sintaxdb.fa.gz --threads {threads} --gzip_decompress --sintax_cutoff 0.8 --randseed {config.seed} --tabbedout ASV_tax.sintax.tsv
+vsearch --sintax ASV_tax.fasta --db sintaxdb.fa.gz --threads {threads} --gzip_decompress --sintax_cutoff {config.sintax_cutoff} --randseed {config.seed} --tabbedout ASV_tax.sintax.tsv
 cp ASV_tax.sintax.tsv "$OLDPWD/intermediates/sintax/ASV_tax.sintax.tsv"
 '''
 tags = ["sintax", "taxonomy"]
@@ -3177,14 +3179,15 @@ input = [
     "results/dada2/ASV_seqs.fasta",
     "intermediates/vsearch_lca/sintaxdb.fa.gz",
 ]
-output = ["intermediates/vsearch_lca/ASV_tax.lca"]
+output = ["intermediates/vsearch_lca/ASV_tax.lca", "intermediates/vsearch_lca/ASV_tax_vsearch_lca.txt"]
 shell = '''
 mkdir -p work/vsearch_lca_classify intermediates/vsearch_lca
 cp {input[0]} work/vsearch_lca_classify/ASV_tax.fasta
 cp {input[1]} work/vsearch_lca_classify/sintaxdb.fa.gz
 cd work/vsearch_lca_classify
-vsearch --usearch_global ASV_tax.fasta --db sintaxdb.fa.gz --id {config.vsearch_lca_id} --threads {threads} --gzip_decompress --top_hits_only --output_no_hits --maxaccepts {config.vsearch_lca_maxaccepts} --maxrejects {config.vsearch_lca_maxrejects} --lca_cutoff {config.vsearch_lca_lca_cutoff} --query_cov {config.vsearch_lca_query_cov} --n_mismatch --notrunclabels --lcaout ASV_tax.lca
+vsearch --usearch_global ASV_tax.fasta --db sintaxdb.fa.gz --id {config.vsearch_lca_id} --threads {threads} --gzip_decompress --top_hits_only --output_no_hits --maxaccepts {config.vsearch_lca_maxaccepts} --maxrejects {config.vsearch_lca_maxrejects} --lca_cutoff {config.vsearch_lca_lca_cutoff} --query_cov {config.vsearch_lca_query_cov} --n_mismatch --notrunclabels --blast6out ASV_tax.txt --lcaout ASV_tax.lca
 cp ASV_tax.lca "$OLDPWD/intermediates/vsearch_lca/ASV_tax.lca"
+cp ASV_tax.txt "$OLDPWD/intermediates/vsearch_lca/ASV_tax_vsearch_lca.txt"
 '''
 tags = ["vsearch", "taxonomy"]
 

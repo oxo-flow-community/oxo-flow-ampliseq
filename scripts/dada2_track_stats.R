@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
-# Transcription of nf-core/ampliseq 2.18.0 module DADA2_STATS
-# (modules/local/dada2_stats.nf). The port passes all input files
+# Transcription of nf-core/ampliseq 3.1.0 module DADA2_STATS (2.18.0
+# baseline; multi-sample track table synced to the 3.1.0 #1057 key-merge fix)
+# (modules/local/dada2_stats/main.nf). The port passes all input files
 # as argv; the script picks the per-sample filter_stats files and the
 # run-level rds files by suffix (upstream lists "./filter_and_trim_files"
 # and reads rds by position).
@@ -37,21 +38,33 @@ nochim = readRDS(grep("\\.seqtab\\.rds$", files, value = TRUE))
 #track reads through pipeline
 getN <- function(x) sum(getUniques(x))
 get_acc <- function(x) sum(x$abundance[x$accept])
+# filter_and_trim rownames end in '_1.fastq.gz', DADA2/seqtab rownames in '_1.filt.fastq.gz'; reduce both to the sample id
+# (upstream 3.1.0 #1057: the track table is built by merging on this key,
+# not by positional cbind, which mislabeled rows when one sample name was
+# a prefix of another)
+normKey_ft <- function(x) sub(pattern = "(.*?)\\..*$", replacement = "\\1", sub(pattern = "_1.fastq.gz$", replacement = "", x))
+normKey_nc <- function(x) sub(pattern = ".filt.fastq.gz$", replacement = "", sub(pattern = "_2.filt.fastq.gz$", replacement = "", sub(pattern = "_1.filt.fastq.gz$", replacement = "", x)))
 if ( nrow(filter_and_trim) == 1 ) {
     track <- cbind(filter_and_trim, getN(dadaFs), getN(dadaRs), getN(mergers), get_acc(mergers), rowSums(nochim))
 } else {
-    dadaFs_getN <- data.frame( sapply(dadaFs, getN) )
-    dadaRs_getN <- data.frame( sapply(dadaRs, getN) )
-    mergers_getN <- data.frame( sapply(mergers, getN) )
-    mergers_acc <- data.frame( sapply(mergers, get_acc) )
-    nochim_rowSums <- data.frame( rowSums(nochim) )
-    track <- cbind(
-        filter_and_trim[order(rownames(filter_and_trim)), ],
-        dadaFs_getN[order(rownames(dadaFs_getN)), ],
-        dadaRs_getN[order(rownames(dadaRs_getN)), ],
-        mergers_getN[order(rownames(mergers_getN)), ],
-        mergers_acc[order(rownames(mergers_acc)), ],
-        nochim_rowSums[order(rownames(nochim_rowSums)), ] )
+    # Merge on the sample key; a positional cbind mislabels counts when one sample name is a prefix of another
+    ft_keys <- normKey_ft(rownames(filter_and_trim))
+    samples <- normKey_nc(rownames(nochim))   # canonical sample order from the ASV table
+    gN  <- function(x) as.numeric(unname(sapply(x, getN)))
+    gNa <- function(x) as.numeric(unname(sapply(x, get_acc)))
+    track <- data.frame(key = ft_keys, filter_and_trim, check.names = FALSE, stringsAsFactors = FALSE)
+    track <- merge(track, data.frame(key = samples,
+            denoisedF      = gN(dadaFs),
+            denoisedR      = gN(dadaRs),
+            denoisedPairs  = gN(mergers),
+            merged         = gNa(mergers),
+            nonchim        = as.numeric(unname(rowSums(nochim))),
+            stringsAsFactors = FALSE),
+        by = "key", all = TRUE, sort = FALSE)
+    # keep the deterministic filter_and_trim row order
+    track <- track[order(match(track$key, ft_keys)), ]
+    rownames(track) <- track$key
+    track$key <- NULL
 }
 colnames(track) <- c("DADA2_input", "filtered", "denoisedF", "denoisedR", "denoisedPairs", "merged", "nonchim")
 rownames(track) <- sub(pattern = "_1.fastq.gz$", replacement = "", rownames(track)) #this is when cutadapt is skipped!

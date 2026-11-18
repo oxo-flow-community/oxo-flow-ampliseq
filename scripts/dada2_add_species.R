@@ -1,5 +1,8 @@
 #!/usr/bin/env Rscript
 # Transcription of nf-core/ampliseq 2.18.0 module DADA2_ADDSPECIES
+# Note: the 3.1.0 #1042 per-rank <rank>_confidence
+# columns and the multi-db db_key plumbing are deliberately not adopted —
+# see README "Declined 3.x deltas".
 # (modules/local/dada2_addspecies.nf) with conf/modules.config
 # DADA2_ADDSPECIES ext.args defaults (n, tryRC; allowMultiple via
 # params.dada_addspecies_allowmultiple).

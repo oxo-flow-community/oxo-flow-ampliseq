@@ -7,12 +7,12 @@
   "source": {
     "repo": "nf-core/ampliseq",
     "url": "https://github.com/nf-core/ampliseq",
-    "tag": "2.18.0",
-    "sha": "2723d4c298d48321594920d0324697e14d73ee94",
+    "tag": "3.1.0",
+    "sha": "b9bd579c0480ee23ecf24655f51c0c67777cd6b3",
     "license": "MIT"
   },
   "created": "2026-08-15",
-  "updated": "2026-09-08",
+  "updated": "2026-11-18",
   "domain": "amplicon",
   "tags": [
     "amplicon",
@@ -129,7 +129,7 @@
   ],
   "excluded": [],
   "not_applicable": [
-    "nanopore: nanopore sequencing branch (params.nanopore) — absent from the 2.18.0 codebase (grep-verified; only docs/usage.md mentions Nanopore re ITSxRust long reads)",
+    "nanopore: nanopore sequencing branch — absent from the 2.18.0 baseline (grep-verified; only docs/usage.md mentioned Nanopore re ITSxRust long reads); upstream introduced a nanopore/Savont branch in 3.0.0 (#1026), not ported (README: Declined 3.x deltas)",
     "syncom: synthetic community controls branch (params.syncom) — absent from the 2.18.0 codebase (grep-verified)",
     "PIGZ_UNCOMPRESS / UNTAR — internal decompression details of the ported `qiime2_preptax` (qza download path); not user-facing gaps"
   ],
@@ -162,7 +162,7 @@
     "q2-sidle",
     "sepp"
   ],
-  "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming (incl. the illumina_pe_its read-through pass), DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking, optional multi-run merge), taxonomy assignment against the SBDI-GTDB reference (or the ITS-cut length-filtered branch) plus alternative classification chains (phylogenetic placement of the PPLACE tree pair, Kraken2, SINTAX and VSEARCH LCA — each feeding the QIIME2 taxonomy slot, phyloseq/TreeSummarizedExperiment objects and the summary report), multi-region OTU picking via the SIDLE workflow over a custom full-length reference (per-region trim/extract/align + database/count/taxonomy/fragment reconstruction and optional SEPP tree insertion, replacing the DADA2 table and QIIME2 taxonomy/tree downstream), a QIIME2 taxa barplot over sample metadata, optional QIIME2 downstream analyses (phylogenetic tree — replaced by the grafted placement tree on the PPLACE branch —, alpha/beta diversity, abundance table exports, ANCOM/ANCOM-BC/ANCOM-BC2, classifier training/prediction), optional PICRUSt2 functional predictions, an overall summary table and a MultiQC report. Optional post-analysis branches cover the SBDI Sweden biodiversity submission export (event/dna/emof/asv-table/annotation tables), phyloseq and TreeSummarizedExperiment R objects per classification tool, and an Rmd-based HTML summary report (results/summary_report/summary_report.html) that aggregates QC plots, DADA2 stats, taxonomy references and the optional branch artifacts into one self-contained document.",
+  "description": "Amplicon sequencing analysis (16S/ITS) that takes raw paired-end reads through FastQC quality control, cutadapt primer trimming (incl. the illumina_pe_readthrough (upstream 3.0.0 rename of illumina_pe_its) read-through pass), DADA2 denoising (quality profiles, filterAndTrim, learnErrors, denoise, chimera removal, read tracking, optional multi-run merge), taxonomy assignment against the SBDI-GTDB reference (or the ITS-cut length-filtered branch) plus alternative classification chains (phylogenetic placement of the PPLACE tree pair, Kraken2, SINTAX and VSEARCH LCA — each feeding the QIIME2 taxonomy slot, phyloseq/TreeSummarizedExperiment objects and the summary report), multi-region OTU picking via the SIDLE workflow over a custom full-length reference (per-region trim/extract/align + database/count/taxonomy/fragment reconstruction and optional SEPP tree insertion, replacing the DADA2 table and QIIME2 taxonomy/tree downstream), a QIIME2 taxa barplot over sample metadata, optional QIIME2 downstream analyses (phylogenetic tree — replaced by the grafted placement tree on the PPLACE branch —, alpha/beta diversity, abundance table exports, ANCOM/ANCOM-BC/ANCOM-BC2, classifier training/prediction), optional PICRUSt2 functional predictions, an overall summary table and a MultiQC report. Optional post-analysis branches cover the SBDI Sweden biodiversity submission export (event/dna/emof/asv-table/annotation tables), phyloseq and TreeSummarizedExperiment R objects per classification tool, and an Rmd-based HTML summary report (results/summary_report/summary_report.html) that aggregates QC plots, DADA2 stats, taxonomy references and the optional branch artifacts into one self-contained document.",
   "installation": {
     "engine": "oxo-flow >= 0.17.0",
     "toolchain": "containers (Docker/Singularity) — pinned images",
