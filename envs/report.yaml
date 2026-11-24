@@ -1,6 +1,8 @@
 # Upstream SUMMARY_REPORT env — the module's exact conda pin set
-# (modules/nf-core/ampliseq/summary_report/main.nf in nf-core/ampliseq
-# 2.18.0). r-lubridate is not in the upstream pin list but ships inside the
+# (modules/local/summary_report.nf in nf-core/ampliseq
+# 2.18.0; pin set verified against that module's conda string — the
+# module was a flat .nf file before the 3.x modules/local/<name>/main.nf
+# restructure). r-lubridate is not in the upstream pin list but ships inside the
 # upstream container; rendered template code calls base R only, so it is
 # omitted here.
 # Channel NAMES only (no mirror URLs): CN users point their conda config
