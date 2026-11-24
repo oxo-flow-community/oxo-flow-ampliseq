@@ -2,8 +2,9 @@ oxo-flow-ampliseq
 Copyright (c) 2026 oxo-flow-community
 
 This pipeline is a port of nf-core/ampliseq
-(https://github.com/nf-core/ampliseq), version 2.18.0 (commit
-2723d4c298d48321594920d0324697e14d73ee94), authored by the
+(https://github.com/nf-core/ampliseq), version 3.1.0 (commit
+b9bd579c0480ee23ecf24655f51c0c67777cd6b3; re-ported from the original
+2.18.0 baseline 2723d4c298d48321594920d0324697e14d73ee94), authored by the
 nf-core/ampliseq developers (nf-core team).
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +25,6 @@ Upstream license
 This port is derived from nf-core/ampliseq under the MIT license.
 The upstream LICENSE must be included **verbatim** in this
 repository: fetch it from the upstream repository at the ported
-2.18.0 tag and place it at LICENSE.upstream. (Apache-2.0 §4(d):
+3.1.0 tag and place it at LICENSE.upstream. (Apache-2.0 §4(d):
 attribution notices from the Source form must be retained.)
 ---------------------------------------------------------------------

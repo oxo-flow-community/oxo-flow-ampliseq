@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
 # Verbatim port of SIDLE_FILTTAX's inline R (nf-core/ampliseq
-# subworkflows/local/sidle/filttax.nf): filters the reconstructed
+# modules/local/sidle_filttax.nf at the 2.18.0 baseline;
+# modules/local/sidle_filttax/main.nf from 3.x): filters the reconstructed
 # taxonomy table to features present in the reconstructed counts table
 # and writes both the filtered table and a merged (all ref rows) table.
 #
